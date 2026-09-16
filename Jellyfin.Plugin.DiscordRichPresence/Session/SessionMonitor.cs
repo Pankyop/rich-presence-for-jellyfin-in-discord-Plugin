@@ -7,6 +7,7 @@ using Jellyfin.Plugin.DiscordRichPresence.Discord;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Dto;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -145,13 +146,14 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                     return;
                 }
 
-                if (e.Item == null || e.IsPaused)
+                var item = e.Session?.NowPlayingItem;
+                if (item == null || e.IsPaused)
                 {
                     await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
                     return;
                 }
 
-                await UpdatePresenceAsync(e.Item, e.PlaybackPositionTicks, e.IsPaused, config, _cts.Token).ConfigureAwait(false);
+                await UpdatePresenceAsync(item, e.PlaybackPositionTicks, e.IsPaused, config, _cts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -180,12 +182,18 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         }
 
         private async Task UpdatePresenceAsync(
-            MediaBrowser.Controller.Entities.BaseItem item,
+            BaseItemDto? item,
             long? positionTicks,
             bool isPaused,
             PluginConfiguration config,
             CancellationToken ct)
         {
+            if (item == null)
+            {
+                await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
+                return;
+            }
+
             var serverAddress = GetServerBaseUrl();
             var activity = ActivityBuilder.Build(item, positionTicks, isPaused, config, serverAddress);
 
