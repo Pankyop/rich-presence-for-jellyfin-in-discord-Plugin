@@ -6,16 +6,17 @@ using Jellyfin.Plugin.DiscordRichPresence.Configuration;
 using Jellyfin.Plugin.DiscordRichPresence.Discord;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.DiscordRichPresence.Session
 {
     /// <summary>
-    /// Background server entry point monitoring active Jellyfin sessions and updating Discord Rich Presence.
+    /// Background hosted service monitoring active Jellyfin sessions and updating Discord Rich Presence.
+    /// Conforms to modern .NET 8 / Jellyfin 10.9+ IHostedService lifecycle.
     /// </summary>
-    public sealed class SessionMonitor : IServerEntryPoint
+    public sealed class SessionMonitor : IHostedService, IDisposable
     {
         private readonly ISessionManager _sessionManager;
         private readonly IServerConfigurationManager _serverConfigurationManager;
@@ -37,7 +38,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             _logger = logger;
         }
 
-        public Task RunAsync()
+        public Task StartAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Starting Discord Rich Presence Session Monitor...");
 
@@ -50,6 +51,22 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             _pollLoopTask = Task.Run(PollLoopAsync);
 
             return Task.CompletedTask;
+        }
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            _logger.LogInformation("Stopping Discord Rich Presence Session Monitor...");
+            _cts.Cancel();
+
+            if (_pollLoopTask != null)
+            {
+                await Task.WhenAny(_pollLoopTask, Task.Delay(2000, cancellationToken)).ConfigureAwait(false);
+            }
+
+            if (_discordClient.IsConnected)
+            {
+                await _discordClient.ClearActivityAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
         private async Task PollLoopAsync()
