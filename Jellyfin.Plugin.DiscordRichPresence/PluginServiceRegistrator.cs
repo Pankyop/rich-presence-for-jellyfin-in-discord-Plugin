@@ -15,7 +15,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
             serviceCollection.AddSingleton<DiscordIpcClient>();
-            serviceCollection.AddSingleton<IServerEntryPoint, SessionMonitor>();
+            serviceCollection.AddHostedService<SessionMonitor>();
         }
     }
 }
