@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "f8b24fad-f0a5-4f01-a9eb-0c3f27c6f78c",
+    "name": "Discord Rich Presence",
+    "description": "Display currently playing media from Jellyfin as Discord Rich Presence activity without Discord SDK.",
+    "overview": "Seamlessly integrates Jellyfin media playback into Discord Rich Presence with zero tracking, local IPC, and rich media metadata.",
+    "owner": "Keto",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "- Initial native C# release for Jellyfin 12.1+ and 10.9+\n- Event-driven Discord Rich Presence integration via ISessionManager\n- Support for Movies, TV Series (SxxExx), and Music\n- Embedded configuration page in Jellyfin Admin Dashboard\n- Zero-telemetry, local IPC Named Pipe / Unix Domain Socket",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.0.0.0/jellyfin-discord-rich-presence.zip",
+        "checksum": "da0e20af6b4c6647aae2068d54eff81235493371108e9c500c125630a14edc07",
+        "timestamp": "2026-09-16T12:00:00Z"
+      }
+    ]
+  }
+]
