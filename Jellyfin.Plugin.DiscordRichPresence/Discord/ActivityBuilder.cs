@@ -1,17 +1,13 @@
 using System;
-using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DiscordRichPresence.Configuration;
 using Jellyfin.Plugin.DiscordRichPresence.Discord.Models;
-using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.Audio;
-using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 {
     /// <summary>
-    /// Constructs DiscordActivity payloads from Jellyfin media items and playback states.
+    /// Constructs DiscordActivity payloads from Jellyfin BaseItemDto metadata and playback states.
     /// </summary>
     public static class ActivityBuilder
     {
@@ -22,7 +18,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         /// Builds a DiscordActivity for the given Jellyfin media item and playback progress.
         /// </summary>
         public static DiscordActivity? Build(
-            BaseItem? item,
+            BaseItemDto? item,
             long? positionTicks,
             bool isPaused,
             PluginConfiguration config,
@@ -33,17 +29,27 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 return null;
             }
 
-            return item switch
+            var type = item.Type ?? string.Empty;
+            if (string.Equals(type, "Movie", StringComparison.OrdinalIgnoreCase))
             {
-                Movie movie => BuildMovieActivity(movie, positionTicks, config, serverAddress),
-                Episode episode => BuildEpisodeActivity(episode, positionTicks, config, serverAddress),
-                Audio audio => BuildAudioActivity(audio, positionTicks, config, serverAddress),
-                _ => BuildGenericActivity(item, positionTicks, config, serverAddress)
-            };
+                return BuildMovieActivity(item, positionTicks, config, serverAddress);
+            }
+
+            if (string.Equals(type, "Episode", StringComparison.OrdinalIgnoreCase))
+            {
+                return BuildEpisodeActivity(item, positionTicks, config, serverAddress);
+            }
+
+            if (string.Equals(type, "Audio", StringComparison.OrdinalIgnoreCase))
+            {
+                return BuildAudioActivity(item, positionTicks, config, serverAddress);
+            }
+
+            return BuildGenericActivity(item, positionTicks, config, serverAddress);
         }
 
         private static DiscordActivity BuildMovieActivity(
-            Movie movie,
+            BaseItemDto movie,
             long? positionTicks,
             PluginConfiguration config,
             string serverAddress)
@@ -94,14 +100,14 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         }
 
         private static DiscordActivity BuildEpisodeActivity(
-            Episode episode,
+            BaseItemDto episode,
             long? positionTicks,
             PluginConfiguration config,
             string serverAddress)
         {
             var seriesName = Sanitize(episode.SeriesName ?? "TV Series");
             var episodeName = Sanitize(episode.Name);
-            var seasonNumber = episode.AiredSeasonNumber ?? episode.ParentIndexNumber ?? 1;
+            var seasonNumber = episode.ParentIndexNumber ?? 1;
             var episodeNumber = episode.IndexNumber ?? 1;
 
             var (startUnix, endUnix) = CalculateTimestamps(positionTicks, episode.RunTimeTicks);
@@ -133,7 +139,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             if (config.ShowMediaBanner)
             {
-                var imageUrl = GetItemImageUrl(episode, serverAddress) ?? GetItemImageUrl(episode.Series, serverAddress);
+                var imageUrl = GetItemImageUrl(episode, serverAddress);
                 activity.Assets = new DiscordAssets
                 {
                     LargeImage = imageUrl ?? DefaultJellyfinIcon,
@@ -147,13 +153,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         }
 
         private static DiscordActivity BuildAudioActivity(
-            Audio audio,
+            BaseItemDto audio,
             long? positionTicks,
             PluginConfiguration config,
             string serverAddress)
         {
             var trackName = Sanitize(audio.Name);
-            var artistName = Sanitize(audio.Artists.Count > 0 ? audio.Artists[0] : "Various Artists");
+            var artistName = Sanitize(audio.Artists != null && audio.Artists.Count > 0 ? audio.Artists[0] : "Various Artists");
             var albumName = Sanitize(audio.Album ?? "Music");
 
             var (startUnix, endUnix) = CalculateTimestamps(positionTicks, audio.RunTimeTicks);
@@ -191,7 +197,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         }
 
         private static DiscordActivity BuildGenericActivity(
-            BaseItem item,
+            BaseItemDto item,
             long? positionTicks,
             PluginConfiguration config,
             string serverAddress)
@@ -231,7 +237,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             return activity;
         }
 
-        private static string? GetItemImageUrl(BaseItem? item, string serverAddress)
+        private static string? GetItemImageUrl(BaseItemDto? item, string serverAddress)
         {
             if (item == null || string.IsNullOrWhiteSpace(serverAddress))
             {
@@ -239,7 +245,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             }
 
             var cleanBase = serverAddress.TrimEnd('/');
-            if (item.HasImage(ImageType.Primary))
+            if (item.ImageTags != null && item.ImageTags.ContainsKey(ImageType.Primary))
             {
                 return $"{cleanBase}/Items/{item.Id}/Images/Primary?fillHeight=300&fillWidth=300&quality=90";
             }
