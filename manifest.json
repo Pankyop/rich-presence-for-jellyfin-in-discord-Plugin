@@ -12,7 +12,7 @@
         "changelog": "- Initial native C# release for Jellyfin 12.1+ and 10.9+\n- Event-driven Discord Rich Presence integration via ISessionManager\n- Support for Movies, TV Series (SxxExx), and Music\n- Embedded configuration page in Jellyfin Admin Dashboard\n- Zero-telemetry, local IPC Named Pipe / Unix Domain Socket",
         "targetAbi": "10.9.0.0",
         "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.0.0.0/jellyfin-discord-rich-presence.zip",
-        "checksum": "da0e20af6b4c6647aae2068d54eff81235493371108e9c500c125630a14edc07",
+        "checksum": "57f9493af9251b9a0db4176d222c85ec5fe5a0ecd6c2304de197f9528d8e52de",
         "timestamp": "2026-09-16T12:00:00Z"
       }
     ]
