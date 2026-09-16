@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Discord Rich Presence</title>
+</head>
+<body>
+<div id="DiscordRichPresenceConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="DiscordRichPresenceConfigForm">
+                <div class="sectionTitleContainer flex align-items-center">
+                    <h2 class="sectionTitle">Discord Rich Presence Settings</h2>
+                    <span class="badge badge-outline">v1.0.0</span>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="chkEnabled" />
+                        <span>Enable Discord Rich Presence</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        Globally enables or disables Rich Presence updates to Discord clients.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="txtAppId">Discord Application ID</label>
+                    <input is="emby-input" type="text" id="txtAppId" required />
+                    <div class="fieldDescription">
+                        The Client ID of your Discord Application from the Discord Developer Portal.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="txtPollInterval">Poll Interval (seconds)</label>
+                    <input is="emby-input" type="number" id="txtPollInterval" min="1" max="60" required />
+                    <div class="fieldDescription">
+                        Interval between session state inspections. Recommended: 5 seconds.
+                    </div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="chkShowEpisodeInfo" />
+                        <span>Display Season and Episode numbers</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        Shows "S01E05 • Episode Title" in the Discord activity status.
+                    </div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="chkShowMediaBanner" />
+                        <span>Display media banner and artwork</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        Displays the show poster or movie artwork as the large Discord activity image.
+                    </div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="chkShowPlaybackPosition" />
+                        <span>Display elapsed playback time</span>
+                    </label>
+                    <div class="fieldDescription checkboxFieldDescription">
+                        Shows current progress timestamp and duration (e.g. 12:30 / 45:00).
+                    </div>
+                </div>
+
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                        <span>Save Settings</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        var DiscordRichPresenceConfig = {
+            pluginUniqueId: "f8b24fad-f0a5-4f01-a9eb-0c3f27c6f78c"
+        };
+
+        document.querySelector('#DiscordRichPresenceConfigPage').addEventListener('pageshow', function () {
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId).then(function (config) {
+                document.querySelector('#chkEnabled').checked = config.Enabled !== false;
+                document.querySelector('#txtAppId').value = config.DiscordApplicationId || "123456789012345678";
+                document.querySelector('#txtPollInterval').value = config.PollIntervalSeconds || 5;
+                document.querySelector('#chkShowEpisodeInfo').checked = config.ShowEpisodeInfo !== false;
+                document.querySelector('#chkShowMediaBanner').checked = config.ShowMediaBanner !== false;
+                document.querySelector('#chkShowPlaybackPosition').checked = config.ShowPlaybackPosition !== false;
+                Dashboard.hideLoadingMsg();
+            });
+        });
+
+        document.querySelector('#DiscordRichPresenceConfigForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            Dashboard.showLoadingMsg();
+
+            ApiClient.getPluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId).then(function (config) {
+                config.Enabled = document.querySelector('#chkEnabled').checked;
+                config.DiscordApplicationId = document.querySelector('#txtAppId').value;
+                config.PollIntervalSeconds = parseInt(document.querySelector('#txtPollInterval').value, 10) || 5;
+                config.ShowEpisodeInfo = document.querySelector('#chkShowEpisodeInfo').checked;
+                config.ShowMediaBanner = document.querySelector('#chkShowMediaBanner').checked;
+                config.ShowPlaybackPosition = document.querySelector('#chkShowPlaybackPosition').checked;
+
+                ApiClient.updatePluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId, config).then(function (result) {
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                });
+            });
+
+            return false;
+        });
+    </script>
+</div>
+</body>
+</html>
