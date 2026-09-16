@@ -48,20 +48,24 @@ def main():
         # Jellyfin official plugin manager expects the plugin DLL inside the zip
         zf.write(source_dll, arcname=dll_name)
 
-    print("==> [4/4] Computing SHA256 checksum...")
+    print("==> [4/4] Computing MD5 and SHA256 checksums...")
     sha256_hash = hashlib.sha256()
+    md5_hash = hashlib.md5()
     with open(zip_path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             sha256_hash.update(chunk)
-    checksum = sha256_hash.hexdigest().lower()
+            md5_hash.update(chunk)
+    checksum_sha256 = sha256_hash.hexdigest().lower()
+    checksum_md5 = md5_hash.hexdigest().upper()
 
     print("\n" + "=" * 60)
     print(f" SUCCESS: Package created at {zip_path}")
     print(f" File size: {zip_path.stat().st_size:,} bytes")
-    print(f" SHA256:   {checksum}")
+    print(f" MD5:      {checksum_md5} (used by Jellyfin)")
+    print(f" SHA256:   {checksum_sha256}")
     print("=" * 60 + "\n")
 
-    return checksum
+    return checksum_md5
 
 if __name__ == "__main__":
     main()
