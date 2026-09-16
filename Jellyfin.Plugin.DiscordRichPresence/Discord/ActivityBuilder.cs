@@ -1,4 +1,5 @@
 using System;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DiscordRichPresence.Configuration;
 using Jellyfin.Plugin.DiscordRichPresence.Discord.Models;
 using MediaBrowser.Model.Dto;
@@ -29,23 +30,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 return null;
             }
 
-            var type = item.Type ?? string.Empty;
-            if (string.Equals(type, "Movie", StringComparison.OrdinalIgnoreCase))
+            return item.Type switch
             {
-                return BuildMovieActivity(item, positionTicks, config, serverAddress);
-            }
-
-            if (string.Equals(type, "Episode", StringComparison.OrdinalIgnoreCase))
-            {
-                return BuildEpisodeActivity(item, positionTicks, config, serverAddress);
-            }
-
-            if (string.Equals(type, "Audio", StringComparison.OrdinalIgnoreCase))
-            {
-                return BuildAudioActivity(item, positionTicks, config, serverAddress);
-            }
-
-            return BuildGenericActivity(item, positionTicks, config, serverAddress);
+                BaseItemKind.Movie => BuildMovieActivity(item, positionTicks, config, serverAddress),
+                BaseItemKind.Episode => BuildEpisodeActivity(item, positionTicks, config, serverAddress),
+                BaseItemKind.Audio => BuildAudioActivity(item, positionTicks, config, serverAddress),
+                _ => BuildGenericActivity(item, positionTicks, config, serverAddress)
+            };
         }
 
         private static DiscordActivity BuildMovieActivity(
