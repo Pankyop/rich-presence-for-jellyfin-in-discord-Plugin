@@ -4,9 +4,17 @@
     "name": "Discord Rich Presence",
     "description": "Display currently playing media from Jellyfin as Discord Rich Presence activity without Discord SDK.",
     "overview": "Seamlessly integrates Jellyfin media playback into Discord Rich Presence with zero tracking, local IPC, and rich media metadata.",
-    "owner": "Keto",
+    "owner": "Pankyop",
     "category": "General",
     "versions": [
+      {
+        "version": "1.0.1.0",
+        "changelog": "- Automatic public anime, TV show, and movie poster resolution via AniList GraphQL, TVMaze, and Wikipedia for local servers\n- Support for optional PublicServerUrl configuration for direct Jellyfin cover proxying\n- Guaranteed high-resolution Jellyfin artwork and PNG play badge fallback\n- Zero-telemetry, local IPC Named Pipe / Unix Domain Socket",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.0.1.0/jellyfin-discord-rich-presence.zip",
+        "checksum": "5434A235173EDB8E82568365AEE5782C",
+        "timestamp": "2026-09-20T00:00:00Z"
+      },
       {
         "version": "1.0.0.0",
         "changelog": "- Initial native C# release for Jellyfin 12.1+ and 10.9+\n- Event-driven Discord Rich Presence integration via ISessionManager\n- Support for Movies, TV Series (SxxExx), and Music\n- Embedded configuration page in Jellyfin Admin Dashboard\n- Zero-telemetry, local IPC Named Pipe / Unix Domain Socket",
