@@ -1,4 +1,6 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.DiscordRichPresence.Configuration;
 using Jellyfin.Plugin.DiscordRichPresence.Discord.Models;
@@ -12,11 +14,39 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
     /// </summary>
     public static class ActivityBuilder
     {
-        private const string DefaultJellyfinIcon = "https://jellyfin.org/images/logo.png";
-        private const string DefaultPlayIcon = "https://cdn.jsdelivr.net/npm/bootstrap-icons/icons/play-fill.svg";
+        /// <summary>
+        /// Asynchronously builds a DiscordActivity, resolving public artwork via ArtworkResolver (AniList, TVMaze, Wikipedia).
+        /// </summary>
+        public static async Task<DiscordActivity?> BuildAsync(
+            BaseItemDto? item,
+            long? positionTicks,
+            bool isPaused,
+            PluginConfiguration config,
+            string serverAddress,
+            CancellationToken ct = default)
+        {
+            if (item == null || isPaused)
+            {
+                return null;
+            }
+
+            string? artworkUrl = null;
+            if (config.ShowMediaBanner)
+            {
+                artworkUrl = await ArtworkResolver.ResolveArtworkUrlAsync(item, config, serverAddress, ct).ConfigureAwait(false);
+            }
+
+            return item.Type switch
+            {
+                BaseItemKind.Movie => BuildMovieActivity(item, positionTicks, config, artworkUrl),
+                BaseItemKind.Episode => BuildEpisodeActivity(item, positionTicks, config, artworkUrl),
+                BaseItemKind.Audio => BuildAudioActivity(item, positionTicks, config, artworkUrl),
+                _ => BuildGenericActivity(item, positionTicks, config, artworkUrl)
+            };
+        }
 
         /// <summary>
-        /// Builds a DiscordActivity for the given Jellyfin media item and playback progress.
+        /// Builds a DiscordActivity synchronously (delegates to BuildAsync).
         /// </summary>
         public static DiscordActivity? Build(
             BaseItemDto? item,
@@ -25,25 +55,14 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             PluginConfiguration config,
             string serverAddress)
         {
-            if (item == null || isPaused)
-            {
-                return null;
-            }
-
-            return item.Type switch
-            {
-                BaseItemKind.Movie => BuildMovieActivity(item, positionTicks, config, serverAddress),
-                BaseItemKind.Episode => BuildEpisodeActivity(item, positionTicks, config, serverAddress),
-                BaseItemKind.Audio => BuildAudioActivity(item, positionTicks, config, serverAddress),
-                _ => BuildGenericActivity(item, positionTicks, config, serverAddress)
-            };
+            return BuildAsync(item, positionTicks, isPaused, config, serverAddress).GetAwaiter().GetResult();
         }
 
         private static DiscordActivity BuildMovieActivity(
             BaseItemDto movie,
             long? positionTicks,
             PluginConfiguration config,
-            string serverAddress)
+            string? artworkUrl)
         {
             var title = Sanitize(movie.Name);
             var (startUnix, endUnix) = CalculateTimestamps(positionTicks, movie.RunTimeTicks);
@@ -77,12 +96,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             if (config.ShowMediaBanner)
             {
-                var imageUrl = GetItemImageUrl(movie, serverAddress);
                 activity.Assets = new DiscordAssets
                 {
-                    LargeImage = imageUrl ?? DefaultJellyfinIcon,
+                    LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(title, 128),
-                    SmallImage = DefaultPlayIcon,
+                    SmallImage = ArtworkResolver.DefaultPlayIcon,
                     SmallText = "Jellyfin"
                 };
             }
@@ -94,7 +112,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             BaseItemDto episode,
             long? positionTicks,
             PluginConfiguration config,
-            string serverAddress)
+            string? artworkUrl)
         {
             var seriesName = Sanitize(episode.SeriesName ?? "TV Series");
             var episodeName = Sanitize(episode.Name);
@@ -130,12 +148,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             if (config.ShowMediaBanner)
             {
-                var imageUrl = GetItemImageUrl(episode, serverAddress);
                 activity.Assets = new DiscordAssets
                 {
-                    LargeImage = imageUrl ?? DefaultJellyfinIcon,
+                    LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(seriesName, 128),
-                    SmallImage = DefaultPlayIcon,
+                    SmallImage = ArtworkResolver.DefaultPlayIcon,
                     SmallText = "Watching on Jellyfin"
                 };
             }
@@ -147,7 +164,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             BaseItemDto audio,
             long? positionTicks,
             PluginConfiguration config,
-            string serverAddress)
+            string? artworkUrl)
         {
             var trackName = Sanitize(audio.Name);
             var artistName = Sanitize(audio.Artists != null && audio.Artists.Count > 0 ? audio.Artists[0] : "Various Artists");
@@ -174,12 +191,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             if (config.ShowMediaBanner)
             {
-                var imageUrl = GetItemImageUrl(audio, serverAddress);
                 activity.Assets = new DiscordAssets
                 {
-                    LargeImage = imageUrl ?? DefaultJellyfinIcon,
+                    LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(albumName, 128),
-                    SmallImage = DefaultPlayIcon,
+                    SmallImage = ArtworkResolver.DefaultPlayIcon,
                     SmallText = "Listening on Jellyfin"
                 };
             }
@@ -191,7 +207,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             BaseItemDto item,
             long? positionTicks,
             PluginConfiguration config,
-            string serverAddress)
+            string? artworkUrl)
         {
             var title = Sanitize(item.Name);
             var (startUnix, endUnix) = CalculateTimestamps(positionTicks, item.RunTimeTicks);
@@ -215,33 +231,16 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             if (config.ShowMediaBanner)
             {
-                var imageUrl = GetItemImageUrl(item, serverAddress);
                 activity.Assets = new DiscordAssets
                 {
-                    LargeImage = imageUrl ?? DefaultJellyfinIcon,
+                    LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(title, 128),
-                    SmallImage = DefaultPlayIcon,
+                    SmallImage = ArtworkResolver.DefaultPlayIcon,
                     SmallText = "Jellyfin"
                 };
             }
 
             return activity;
-        }
-
-        private static string? GetItemImageUrl(BaseItemDto? item, string serverAddress)
-        {
-            if (item == null || string.IsNullOrWhiteSpace(serverAddress))
-            {
-                return null;
-            }
-
-            var cleanBase = serverAddress.TrimEnd('/');
-            if (item.ImageTags != null && item.ImageTags.ContainsKey(ImageType.Primary))
-            {
-                return $"{cleanBase}/Items/{item.Id}/Images/Primary?fillHeight=300&fillWidth=300&quality=90";
-            }
-
-            return null;
         }
 
         private static (long? start, long? end) CalculateTimestamps(long? positionTicks, long? runtimeTicks)
