@@ -34,10 +34,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/jellyfin-discord-rich-presence.zip
-          name: Release ${{ github.ref_name }}
-          body: |
-            ## Jellyfin Discord Rich Presence Plugin ${{ github.ref_name }}
-            - Native C# .NET 8 plugin for Jellyfin 12.1+ and 10.9+
-            - Built directly from tag `${{ github.ref_name }}`
+          name: Release ${{ github.ref_name }} — Automatic Anime Posters (AniList), Media Fallbacks & Public Server URL
+          body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
