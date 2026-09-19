@@ -195,7 +195,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             }
 
             var serverAddress = GetServerBaseUrl();
-            var activity = ActivityBuilder.Build(item, positionTicks, isPaused, config, serverAddress);
+            var activity = await ActivityBuilder.BuildAsync(item, positionTicks, isPaused, config, serverAddress, ct).ConfigureAwait(false);
 
             if (activity == null)
             {
