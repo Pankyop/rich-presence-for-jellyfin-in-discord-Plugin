@@ -40,6 +40,14 @@
                     </div>
                 </div>
 
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="txtPublicServerUrl">Public Server URL (Optional)</label>
+                    <input is="emby-input" type="text" id="txtPublicServerUrl" placeholder="https://jellyfin.yourdomain.com" />
+                    <div class="fieldDescription">
+                        Publicly reachable HTTPS/HTTP address of this Jellyfin server. Required for Discord to proxy and display media artwork (anime/movie/show covers). If omitted or running on localhost/LAN, official high-resolution fallback artwork is displayed.
+                    </div>
+                </div>
+
                 <div class="checkboxContainer checkboxContainer-withDescription">
                     <label>
                         <input is="emby-checkbox" type="checkbox" id="chkShowEpisodeInfo" />
@@ -90,6 +98,7 @@
                 document.querySelector('#chkEnabled').checked = config.Enabled !== false;
                 document.querySelector('#txtAppId').value = config.DiscordApplicationId || "123456789012345678";
                 document.querySelector('#txtPollInterval').value = config.PollIntervalSeconds || 5;
+                document.querySelector('#txtPublicServerUrl').value = config.PublicServerUrl || "";
                 document.querySelector('#chkShowEpisodeInfo').checked = config.ShowEpisodeInfo !== false;
                 document.querySelector('#chkShowMediaBanner').checked = config.ShowMediaBanner !== false;
                 document.querySelector('#chkShowPlaybackPosition').checked = config.ShowPlaybackPosition !== false;
@@ -105,6 +114,7 @@
                 config.Enabled = document.querySelector('#chkEnabled').checked;
                 config.DiscordApplicationId = document.querySelector('#txtAppId').value;
                 config.PollIntervalSeconds = parseInt(document.querySelector('#txtPollInterval').value, 10) || 5;
+                config.PublicServerUrl = document.querySelector('#txtPublicServerUrl').value.trim();
                 config.ShowEpisodeInfo = document.querySelector('#chkShowEpisodeInfo').checked;
                 config.ShowMediaBanner = document.querySelector('#chkShowMediaBanner').checked;
                 config.ShowPlaybackPosition = document.querySelector('#chkShowPlaybackPosition').checked;
