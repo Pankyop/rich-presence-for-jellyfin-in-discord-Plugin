@@ -40,6 +40,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Configuration
         public bool ShowPlaybackPosition { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets the publicly accessible URL of the Jellyfin server (e.g. https://jellyfin.example.com).
+        /// Discord's CDN proxies media artwork and cannot reach localhost or private LAN IP addresses.
+        /// When configured, public artwork URLs are sent to Discord for rich media covers.
+        /// </summary>
+        public string PublicServerUrl { get; set; } = string.Empty;
+
+        /// <summary>
         /// Gets or sets mappings between Jellyfin User IDs and Discord User IDs.
         /// </summary>
         public List<UserDiscordMapping> UserMappings { get; set; } = new();
