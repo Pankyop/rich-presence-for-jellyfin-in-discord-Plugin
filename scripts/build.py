@@ -46,7 +46,11 @@ def main():
     print(f"==> [3/4] Packaging {dll_name} into {zip_path.name}...")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         # Jellyfin official plugin manager expects the plugin DLL inside the zip
-        zf.write(source_dll, arcname=dll_name)
+        # Use deterministic timestamp to ensure identical checksums across build environments
+        zinfo = zipfile.ZipInfo(dll_name, date_time=(2026, 9, 20, 0, 0, 0))
+        zinfo.compress_type = zipfile.ZIP_DEFLATED
+        with open(source_dll, "rb") as f:
+            zf.writestr(zinfo, f.read())
 
     print("==> [4/4] Computing MD5 and SHA256 checksums...")
     sha256_hash = hashlib.sha256()
