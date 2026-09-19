@@ -16,9 +16,19 @@ Access the configuration page by navigating to:
 | **Enable Discord Rich Presence** | Boolean | `true` | Globally enables or disables rich presence activity updates. |
 | **Discord Application ID** | String | `123456789012345678` | The Application Client ID from Discord Developer Portal. |
 | **Poll Interval (seconds)** | Integer | `5` | The frequency at which background synchronization checks active sessions. |
+| **Public Server URL** | String | *(Empty)* | Publicly reachable address of your server (`https://jellyfin.example.com`). Required for Discord to proxy and display media artwork (anime/movie/show covers). |
 | **Display Season and Episode** | Boolean | `true` | Formats series as `S01E05 • Episode Title`. |
 | **Display media banner/artwork** | Boolean | `true` | Shows poster thumbnail in Discord activity. |
 | **Display elapsed playback time** | Boolean | `true` | Calculates and displays playback progress timestamps (`MM:SS / HH:MM:SS`). |
+
+---
+
+## Media Banners & Image Proxying
+
+Discord displays rich presence images via its own proxy CDN (`media.discordapp.net`). This introduces key network behaviors:
+
+1. **Localhost / LAN Servers**: If Jellyfin runs locally on `localhost:8096` or a private IP (`192.168.x.x`), Discord's servers cannot reach your machine to fetch cover art. In this mode, the plugin automatically displays high-resolution official Jellyfin artwork and play status badges as fallbacks.
+2. **Public Jellyfin Servers**: If your server is reachable over the internet (via domain, reverse proxy, or DDNS), specify your URL in **Public Server URL** (e.g. `https://jellyfin.mydomain.com`). The plugin will then send direct item and series poster URLs to Discord, showing dynamic cover art for anime, movies, and TV series.
 
 ---
 
