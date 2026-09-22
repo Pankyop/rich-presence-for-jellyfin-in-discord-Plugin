@@ -27,6 +27,8 @@
   <!-- Embed the HTML configuration page for the Jellyfin admin dashboard -->
   <ItemGroup>
     <EmbeddedResource Include="Configuration\configPage.html" />
+    <!-- Plugin logo displayed in Jellyfin's plugin catalog and admin panel -->
+    <EmbeddedResource Include="logo.png" />
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,9 @@
 # Discord Rich Presence for Jellyfin
 
+<p align="center">
+  <img src="assets/logo.png" alt="Discord Rich Presence for Jellyfin" width="200" />
+</p>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Target: .NET 8](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Jellyfin: 12.1+ / 10.9+](https://img.shields.io/badge/Jellyfin-12.1%2B%20%7C%2010.9%2B-blue.svg)](https://jellyfin.org/)
