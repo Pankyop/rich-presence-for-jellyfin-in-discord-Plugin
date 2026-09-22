@@ -111,6 +111,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 };
 
                 await SendPacketAsync(DiscordOpcode.Frame, command, cancellationToken).ConfigureAwait(false);
+
+                // Discord always sends back a response packet for every FRAME command.
+                // We MUST drain it, otherwise the pipe receive buffer fills up after
+                // several poll cycles and the connection silently breaks.
+                await ReadPacketAsync(cancellationToken).ConfigureAwait(false);
+
                 return true;
             }
             catch (Exception ex)
