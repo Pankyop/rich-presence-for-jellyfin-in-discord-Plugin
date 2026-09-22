@@ -40,7 +40,7 @@ def main():
     body_text = notes_file.read_text(encoding="utf-8") if notes_file.exists() else f"Release {tag}"
 
     repo = 'Pankyop/rich-presence-for-jellyfin-in-discord-Plugin'
-    tag = 'v1.0.1.0'
+    tag = 'v1.0.2.0'
 
     req = urllib.request.Request(f'https://api.github.com/repos/{repo}/releases/tags/{tag}', headers=headers)
     release = None
@@ -56,7 +56,7 @@ def main():
         payload = {
             'tag_name': tag,
             'target_commitish': 'main',
-            'name': 'Release v1.0.1.0 — Automatic Anime Posters (AniList), Media Fallbacks & Public Server URL',
+            'name': 'Release v1.0.2.0 — Stability Fix: Discord Connection Drop',
             'body': body_text,
             'draft': False,
             'prerelease': False
@@ -68,7 +68,7 @@ def main():
     else:
         print(f"Updating release {tag} description on GitHub...")
         payload = {
-            'name': 'Release v1.0.1.0 — Automatic Anime Posters (AniList), Media Fallbacks & Public Server URL',
+            'name': 'Release v1.0.2.0 — Stability Fix: Discord Connection Drop',
             'body': body_text
         }
         req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/{release['id']}", data=json.dumps(payload).encode('utf-8'), headers=headers)

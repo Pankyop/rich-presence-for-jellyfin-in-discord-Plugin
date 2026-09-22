@@ -1,3 +1,31 @@
+## 🔧 v1.0.2.0 — Stability Fix: Discord Connection Drop (2026-09-23)
+
+### 🐛 Bug Fixes
+
+- **Fixed Discord activity disappearing after a few seconds of playback**: The plugin was sending activity updates to Discord but never reading Discord's acknowledgment response. Over several update cycles the pipe receive buffer filled up and Discord silently closed the connection. The plugin now correctly drains the response after every activity update, keeping the connection alive indefinitely.
+
+### 📦 Installation & Verification
+
+#### Option A: Automatic via Plugin Repository (Recommended)
+Add this repository manifest to your Jellyfin server:
+```text
+https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/manifest.json
+```
+Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update with one click.
+
+#### Option B: Manual Installation
+1. Download `jellyfin-discord-rich-presence.zip` below.
+2. Extract the archive into your Jellyfin `plugins/DiscordRichPresence/` directory.
+3. Restart Jellyfin Server.
+
+### 🔐 Integrity Checksums
+| Algorithm | Checksum |
+|---|---|
+| **MD5** *(Jellyfin Package Manager)* | `6A1650497257ECCC182BD337D9392F5C` |
+| **SHA256** | `64a009d17bf9efaf1dfa22de47bbaddf1492ace6ad5405a219c1f200041c93c4` |
+
+---
+
 ## 🌟 What's New in v1.0.1.0 (End-User Highlights)
 
 This release solves media poster display issues on Discord, bringing automatic high-resolution anime, movie, and TV series artwork support directly to your profile.
