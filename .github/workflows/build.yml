@@ -1,0 +1,47 @@
+name: '🔨 Build'
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'assets/**'
+      - 'docs/**'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'assets/**'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & Verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore NuGet dependencies
+        run: dotnet restore Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj
+
+      - name: Build project
+        run: dotnet build Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj -c Release --no-restore
+
+      - name: Build and Package Plugin (dry run)
+        run: python scripts/build.py

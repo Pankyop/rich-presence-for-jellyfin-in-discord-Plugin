@@ -1,0 +1,52 @@
+name: '🔬 CodeQL Security Scan'
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+  schedule:
+    # Runs every Thursday at 02:24 UTC
+    - cron: '24 2 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'csharp' ]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Build for CodeQL
+        run: dotnet build Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj -c Release
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

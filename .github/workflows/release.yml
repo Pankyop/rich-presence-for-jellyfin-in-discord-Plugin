@@ -1,21 +1,30 @@
-name: Release Plugin
+name: '🚀 Release Plugin'
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.3.0) — only needed for manual runs without a tag'
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   build-and-release:
+    name: Build, Update Manifest & Publish Release
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          # Full history needed so git-push back works correctly
+          fetch-depth: 0
 
       - name: Setup .NET 8 SDK
         uses: actions/setup-dotnet@v4
@@ -27,14 +36,67 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Resolve release version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          # Strip leading 'v' for the numeric version (e.g. v1.0.3.0 → 1.0.3.0)
+          NUMERIC="${VERSION#v}"
+          echo "tag=${VERSION}"    >> "$GITHUB_OUTPUT"
+          echo "numeric=${NUMERIC}" >> "$GITHUB_OUTPUT"
+
       - name: Build and Package Plugin
         run: python scripts/build.py
+
+      - name: Extract checksums
+        id: checksums
+        run: |
+          python - <<'EOF'
+          import hashlib, json, os, pathlib, zipfile
+
+          zip_path = pathlib.Path("dist/jellyfin-discord-rich-presence.zip")
+          sha256 = hashlib.sha256()
+          md5    = hashlib.md5()
+          with open(zip_path, "rb") as f:
+              for chunk in iter(lambda: f.read(65536), b""):
+                  sha256.update(chunk)
+                  md5.update(chunk)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"md5={md5.hexdigest().upper()}\n")
+              out.write(f"sha256={sha256.hexdigest().lower()}\n")
+          EOF
+
+      - name: Update manifest.json
+        env:
+          VERSION:    ${{ steps.version.outputs.numeric }}
+          MD5:        ${{ steps.checksums.outputs.md5 }}
+          SHA256:     ${{ steps.checksums.outputs.sha256 }}
+          TAG:        ${{ steps.version.outputs.tag }}
+          REPO:       ${{ github.repository }}
+        run: |
+          python scripts/update_manifest.py
+
+      - name: Commit updated manifest.json
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: |
+            chore(release): update manifest.json for ${{ steps.version.outputs.tag }} [skip ci]
+          commit_user_name:  github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          commit_author:     github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          file_pattern: manifest.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/jellyfin-discord-rich-presence.zip
-          name: Release ${{ github.ref_name }} — Automatic Anime Posters (AniList), Media Fallbacks & Public Server URL
-          body_path: RELEASE_NOTES.md
-          draft: false
+          tag_name:   ${{ steps.version.outputs.tag }}
+          name:       'Release ${{ steps.version.outputs.tag }}'
+          files:      dist/jellyfin-discord-rich-presence.zip
+          body_path:  RELEASE_NOTES.md
+          draft:      false
           prerelease: false

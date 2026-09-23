@@ -1,0 +1,76 @@
+# Labels definition file — used by the 🏷️ Sync Labels workflow
+# Synced automatically on the 1st of every month via .github/workflows/sync-labels.yml
+
+# ── PR Classification Labels ─────────────────────────────────────────────────
+
+- name: major-feature
+  color: '7057ff'
+  description: 'A large new feature or significant enhancement'
+
+- name: feature
+  color: '0075ca'
+  description: 'A new feature or minor enhancement'
+
+- name: bugfix
+  color: 'd73a4a'
+  description: 'A bug fix'
+
+- name: docs
+  color: '0e8a16'
+  description: 'Documentation changes only'
+
+- name: chore
+  color: 'e4e669'
+  description: 'Dependency updates, CI, refactoring with no user-facing changes'
+
+- name: skip-changelog
+  color: 'ededed'
+  description: 'This PR should not appear in the changelog'
+
+# ── Issue Labels ─────────────────────────────────────────────────────────────
+
+- name: 'bug'
+  color: 'd73a4a'
+  description: 'Something is not working'
+
+- name: 'enhancement'
+  color: 'a2eeef'
+  description: 'New feature or request'
+
+- name: 'question'
+  color: 'd876e3'
+  description: 'Further information is requested'
+
+- name: 'help wanted'
+  color: '008672'
+  description: 'Extra attention is needed'
+
+- name: 'good first issue'
+  color: '7057ff'
+  description: 'Good for newcomers'
+
+- name: 'wontfix'
+  color: 'ffffff'
+  description: 'This will not be worked on'
+
+- name: 'duplicate'
+  color: 'cfd3d7'
+  description: 'This issue or PR already exists'
+
+- name: 'invalid'
+  color: 'e4e669'
+  description: 'This doesn''t seem right'
+
+# ── Status Labels ─────────────────────────────────────────────────────────────
+
+- name: 'in progress'
+  color: 'fbca04'
+  description: 'Currently being worked on'
+
+- name: 'needs review'
+  color: '0075ca'
+  description: 'Waiting for a reviewer'
+
+- name: 'blocked'
+  color: 'b60205'
+  description: 'Blocked by an external dependency'
