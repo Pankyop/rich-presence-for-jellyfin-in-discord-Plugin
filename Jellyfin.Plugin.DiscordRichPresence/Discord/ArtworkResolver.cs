@@ -22,7 +22,19 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         public const string DefaultJellyfinIcon = "https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/web/icon-transparent.png";
         public const string DefaultPlayIcon = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/25b6.png";
 
-        private static readonly ConcurrentDictionary<string, string> _cache = new(StringComparer.OrdinalIgnoreCase);
+        private sealed class CacheEntry
+        {
+            public string Url { get; }
+            public DateTimeOffset ExpiresAt { get; }
+
+            public CacheEntry(string url, DateTimeOffset expiresAt)
+            {
+                Url = url;
+                ExpiresAt = expiresAt;
+            }
+        }
+
+        private static readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
 
         private static readonly HttpClient _httpClient = new HttpClient
         {
@@ -75,41 +87,51 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 return DefaultJellyfinIcon;
             }
 
-            // 3. Check in-memory cache for fast sub-millisecond retrieval
-            if (_cache.TryGetValue(searchTitle, out var cachedUrl))
+            // 3. Check in-memory cache with TTL check
+            var now = DateTimeOffset.UtcNow;
+            if (_cache.TryGetValue(searchTitle, out var cachedEntry) && now < cachedEntry.ExpiresAt)
             {
-                return cachedUrl;
+                return cachedEntry.Url;
+            }
+
+            // Housekeeping: purge expired entries if cache is growing
+            if (_cache.Count > 300)
+            {
+                CleanExpiredCache(now);
             }
 
             try
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(TimeSpan.FromSeconds(3));
-
                 // 4. Try AniList GraphQL (primary for Anime series and Anime movies)
-                var anilistPoster = await QueryAniListAsync(searchTitle, cts.Token).ConfigureAwait(false);
+                using var aniListCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                aniListCts.CancelAfter(TimeSpan.FromSeconds(2));
+                var anilistPoster = await QueryAniListAsync(searchTitle, aniListCts.Token).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(anilistPoster))
                 {
-                    _cache[searchTitle] = anilistPoster;
+                    _cache[searchTitle] = new CacheEntry(anilistPoster, now.AddHours(24));
                     return anilistPoster;
                 }
 
                 // 5. Try TVMaze (for general TV series)
                 if (item.Type == BaseItemKind.Episode || item.Type == BaseItemKind.Series)
                 {
-                    var tvmazePoster = await QueryTvMazeAsync(searchTitle, cts.Token).ConfigureAwait(false);
+                    using var tvMazeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    tvMazeCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    var tvmazePoster = await QueryTvMazeAsync(searchTitle, tvMazeCts.Token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(tvmazePoster))
                     {
-                        _cache[searchTitle] = tvmazePoster;
+                        _cache[searchTitle] = new CacheEntry(tvmazePoster, now.AddHours(24));
                         return tvmazePoster;
                     }
                 }
 
                 // 6. Try Wikipedia Summary API (for Movies and general media)
-                var wikiPoster = await QueryWikipediaAsync(searchTitle, cts.Token).ConfigureAwait(false);
+                using var wikiCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                wikiCts.CancelAfter(TimeSpan.FromSeconds(2));
+                var wikiPoster = await QueryWikipediaAsync(searchTitle, wikiCts.Token).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(wikiPoster))
                 {
-                    _cache[searchTitle] = wikiPoster;
+                    _cache[searchTitle] = new CacheEntry(wikiPoster, now.AddHours(24));
                     return wikiPoster;
                 }
             }
@@ -118,8 +140,20 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 // Ignore external API failure and fall back safely
             }
 
-            _cache[searchTitle] = DefaultJellyfinIcon;
+            // Cache transient failure for 5 minutes instead of permanently
+            _cache[searchTitle] = new CacheEntry(DefaultJellyfinIcon, now.AddMinutes(5));
             return DefaultJellyfinIcon;
+        }
+
+        private static void CleanExpiredCache(DateTimeOffset now)
+        {
+            foreach (var kvp in _cache)
+            {
+                if (now >= kvp.Value.ExpiresAt)
+                {
+                    _cache.TryRemove(kvp.Key, out _);
+                }
+            }
         }
 
         private static string GetSearchTitle(BaseItemDto item)
