@@ -115,7 +115,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 // Discord always sends back a response packet for every FRAME command.
                 // We MUST drain it, otherwise the pipe receive buffer fills up after
                 // several poll cycles and the connection silently breaks.
-                await ReadPacketAsync(cancellationToken).ConfigureAwait(false);
+                var response = await ReadPacketAsync(cancellationToken).ConfigureAwait(false);
+                if (response == null)
+                {
+                    _logger.LogWarning("Discord IPC connection closed or failed while waiting for activity response.");
+                    CloseStream();
+                    return false;
+                }
 
                 return true;
             }
@@ -228,7 +234,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     try
                     {
                         var pipe = new NamedPipeClientStream(".", $"discord-ipc-{i}", PipeDirection.InOut, PipeOptions.Asynchronous);
-                        await pipe.ConnectAsync(1000, cancellationToken).ConfigureAwait(false);
+                        await pipe.ConnectAsync(150, cancellationToken).ConfigureAwait(false);
                         return pipe;
                     }
                     catch
