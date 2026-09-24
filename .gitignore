@@ -27,3 +27,7 @@ desktop.ini
 
 ## Private developer documents — never push to GitHub
 RELEASE_CHECKLIST.md
+
+## Local CodeGraph index
+.codegraph/
+
