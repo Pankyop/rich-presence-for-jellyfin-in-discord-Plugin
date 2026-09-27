@@ -27,10 +27,24 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         private Task? _pollLoopTask;
         private bool _isDisposed;
 
+        // ── Rate-limit throttle state ──────────────────────────────────────────
+        // Discord RPC allows max 5 SET_ACTIVITY frames per 20 seconds.
+        // We only send a new frame when one of the following changes:
+        //   - item changes (new movie / episode starts)
+        //   - pause state changes (play ↔ pause)
+        //   - seek is detected (position jumped > 5 seconds from expected)
+        //   - keepalive interval elapsed (default: 20 seconds) to refresh timestamps
+        private readonly object _throttleLock = new();
         private DateTimeOffset _lastUpdatedUtc = DateTimeOffset.MinValue;
         private Guid? _lastItemId;
         private bool _lastIsPaused;
-        private readonly object _throttleLock = new();
+        private long _lastPositionTicks;            // for seek detection
+        private const double KeepaliveIntervalSec = 20.0;   // refresh even without state change
+        private const long SeekThresholdTicks = 10_000_000L * 5L; // 5-second seek threshold
+
+        // ── Pause grace period state ───────────────────────────────────────────
+        private DateTimeOffset _pausedSince = DateTimeOffset.MaxValue;
+        private bool _pausedPresenceCleared;
 
         public SessionMonitor(
             ISessionManager sessionManager,
@@ -142,16 +156,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                     return;
                 }
 
-                // Check if any other session is still playing
-                var activeSession = _sessionManager.Sessions.FirstOrDefault(s => s.NowPlayingItem != null && !s.PlayState.IsPaused);
+                // Check if any other session (matching user filter) is still playing
+                var activeSession = FindActiveSession(config);
                 if (activeSession == null)
                 {
-                    lock (_throttleLock)
-                    {
-                        _lastItemId = null;
-                        _lastUpdatedUtc = DateTimeOffset.MinValue;
-                    }
-
+                    ResetThrottleState();
                     await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
                 }
             }
@@ -171,35 +180,38 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                     return;
                 }
 
-                var item = e.Session?.NowPlayingItem;
-                if (item == null || e.IsPaused)
+                // Apply user filter if configured
+                if (!IsSessionAllowed(e.Session, config))
                 {
-                    lock (_throttleLock)
-                    {
-                        _lastItemId = null;
-                        _lastUpdatedUtc = DateTimeOffset.MinValue;
-                    }
+                    return;
+                }
 
+                var item = e.Session?.NowPlayingItem;
+
+                if (item == null)
+                {
+                    ResetThrottleState();
                     await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
                     return;
                 }
 
-                // Throttling: If it's a progress tick of the same item without pause state change,
-                // do not send IPC frames to Discord faster than once every 4 seconds.
-                if (isProgressEvent)
+                if (e.IsPaused)
                 {
-                    lock (_throttleLock)
-                    {
-                        if (_lastItemId == item.Id &&
-                            _lastIsPaused == e.IsPaused &&
-                            (DateTimeOffset.UtcNow - _lastUpdatedUtc).TotalSeconds < 4.0)
-                        {
-                            return;
-                        }
-                    }
+                    await HandlePausedStateAsync(item, e.PlaybackPositionTicks, config).ConfigureAwait(false);
+                    return;
                 }
 
-                await UpdatePresenceAsync(item, e.PlaybackPositionTicks, e.IsPaused, config, _cts.Token).ConfigureAwait(false);
+                // Reset pause grace state when resuming
+                _pausedSince = DateTimeOffset.MaxValue;
+                _pausedPresenceCleared = false;
+
+                // Throttle: for progress events, only send if something meaningful changed
+                if (isProgressEvent && !ShouldSendUpdate(item.Id, false, e.PlaybackPositionTicks))
+                {
+                    return;
+                }
+
+                await UpdatePresenceAsync(item, e.PlaybackPositionTicks, false, config, _cts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -207,30 +219,136 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             }
         }
 
+        private async Task HandlePausedStateAsync(BaseItemDto item, long? positionTicks, PluginConfiguration config)
+        {
+            // First time entering pause
+            if (_pausedSince == DateTimeOffset.MaxValue)
+            {
+                _pausedSince = DateTimeOffset.UtcNow;
+                _pausedPresenceCleared = false;
+            }
+
+            var pausedForMinutes = (DateTimeOffset.UtcNow - _pausedSince).TotalMinutes;
+
+            // If grace period expired, clear presence and don't update again
+            if (pausedForMinutes >= config.PauseGracePeriodMinutes)
+            {
+                if (!_pausedPresenceCleared)
+                {
+                    _pausedPresenceCleared = true;
+                    ResetThrottleState();
+                    await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
+                }
+                return;
+            }
+
+            if (!config.ShowPauseState)
+            {
+                // Legacy behavior: clear immediately on pause
+                ResetThrottleState();
+                await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
+                return;
+            }
+
+            // Show paused presence: only send once per pause event to avoid rate limiting
+            if (ShouldSendUpdate(item.Id, true, positionTicks))
+            {
+                await UpdatePresenceAsync(item, positionTicks, true, config, _cts.Token).ConfigureAwait(false);
+            }
+        }
+
         private async Task SyncActiveSessionsAsync(PluginConfiguration config, CancellationToken ct)
         {
-            var playingSession = _sessionManager.Sessions.FirstOrDefault(s => s.NowPlayingItem != null && !s.PlayState.IsPaused);
+            var playingSession = FindActiveSession(config);
+
             if (playingSession == null)
             {
+                // Check for a paused session (user filter applied)
+                var pausedSession = _sessionManager.Sessions
+                    .Where(s => IsSessionAllowed(s, config))
+                    .FirstOrDefault(s => s.NowPlayingItem != null && s.PlayState.IsPaused);
+
+                if (pausedSession != null && config.ShowPauseState)
+                {
+                    // Sync paused state via polling
+                    var pausedItem = pausedSession.NowPlayingItem;
+                    if (pausedItem != null && !_pausedPresenceCleared)
+                    {
+                        if (_pausedSince == DateTimeOffset.MaxValue)
+                        {
+                            _pausedSince = DateTimeOffset.UtcNow;
+                        }
+                        var pausedForMinutes = (DateTimeOffset.UtcNow - _pausedSince).TotalMinutes;
+                        if (pausedForMinutes < config.PauseGracePeriodMinutes)
+                        {
+                            if (ShouldSendUpdate(pausedItem.Id, true, pausedSession.PlayState.PositionTicks))
+                            {
+                                await UpdatePresenceAsync(pausedItem, pausedSession.PlayState.PositionTicks, true, config, ct).ConfigureAwait(false);
+                            }
+                            return;
+                        }
+                        // Grace period expired
+                        _pausedPresenceCleared = true;
+                    }
+                }
+
                 if (_discordClient.IsConnected)
                 {
-                    lock (_throttleLock)
-                    {
-                        _lastItemId = null;
-                        _lastUpdatedUtc = DateTimeOffset.MinValue;
-                    }
-
+                    ResetThrottleState();
                     await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
                 }
+                return;
+            }
+
+            // Reset pause state when playing
+            _pausedSince = DateTimeOffset.MaxValue;
+            _pausedPresenceCleared = false;
+
+            // Only send if something meaningful changed (keepalive or item/seek change)
+            if (!ShouldSendUpdate(playingSession.NowPlayingItem!.Id, false, playingSession.PlayState.PositionTicks))
+            {
                 return;
             }
 
             await UpdatePresenceAsync(
                 playingSession.NowPlayingItem,
                 playingSession.PlayState.PositionTicks,
-                playingSession.PlayState.IsPaused,
+                false,
                 config,
                 ct).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Returns true if a new Discord IPC frame should be sent.
+        /// Conditions: item changed, pause state changed, seek detected, or keepalive interval elapsed.
+        /// </summary>
+        private bool ShouldSendUpdate(Guid itemId, bool isPaused, long? positionTicks)
+        {
+            lock (_throttleLock)
+            {
+                var now = DateTimeOffset.UtcNow;
+                var elapsed = (now - _lastUpdatedUtc).TotalSeconds;
+
+                // Always send on item change or pause state change
+                if (_lastItemId != itemId || _lastIsPaused != isPaused)
+                {
+                    return true;
+                }
+
+                // Detect seek: position jumped more than SeekThresholdTicks from expected
+                if (positionTicks.HasValue && elapsed < KeepaliveIntervalSec)
+                {
+                    var expectedTicks = _lastPositionTicks + (long)(elapsed * 10_000_000L);
+                    var delta = Math.Abs(positionTicks.Value - expectedTicks);
+                    if (delta > SeekThresholdTicks)
+                    {
+                        return true; // user seeked
+                    }
+                }
+
+                // Keepalive: send every KeepaliveIntervalSec to refresh Discord timestamps
+                return elapsed >= KeepaliveIntervalSec;
+            }
         }
 
         private async Task UpdatePresenceAsync(
@@ -242,12 +360,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         {
             if (item == null)
             {
-                lock (_throttleLock)
-                {
-                    _lastItemId = null;
-                    _lastUpdatedUtc = DateTimeOffset.MinValue;
-                }
-
+                ResetThrottleState();
                 await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
                 return;
             }
@@ -257,12 +370,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 
             if (activity == null)
             {
-                lock (_throttleLock)
-                {
-                    _lastItemId = null;
-                    _lastUpdatedUtc = DateTimeOffset.MinValue;
-                }
-
+                ResetThrottleState();
                 await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
                 return;
             }
@@ -284,7 +392,49 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                     _lastItemId = item.Id;
                     _lastIsPaused = isPaused;
                     _lastUpdatedUtc = DateTimeOffset.UtcNow;
+                    _lastPositionTicks = positionTicks ?? 0;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Finds the first active (non-paused) playing session, applying TargetUserId filter if configured.
+        /// </summary>
+        private SessionInfo? FindActiveSession(PluginConfiguration config)
+        {
+            return _sessionManager.Sessions
+                .Where(s => IsSessionAllowed(s, config))
+                .FirstOrDefault(s => s.NowPlayingItem != null && !s.PlayState.IsPaused);
+        }
+
+        /// <summary>
+        /// Returns true if the session matches the configured user filter (or if no filter is set).
+        /// </summary>
+        private static bool IsSessionAllowed(SessionInfo? session, PluginConfiguration config)
+        {
+            if (session == null)
+            {
+                return false;
+            }
+
+            var target = config.TargetUserId?.Trim();
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return true; // no filter: allow all sessions
+            }
+
+            // Match by username (case-insensitive) or by user ID string
+            return string.Equals(session.UserName, target, StringComparison.OrdinalIgnoreCase)
+                || session.UserId.ToString().Equals(target, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void ResetThrottleState()
+        {
+            lock (_throttleLock)
+            {
+                _lastItemId = null;
+                _lastUpdatedUtc = DateTimeOffset.MinValue;
+                _lastPositionTicks = 0;
             }
         }
 
