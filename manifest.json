@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/assets/logo.png",
     "versions": [
       {
+        "version": "1.1.0.0",
+        "changelog": "- Added IMDb poster resolver for non-anime movies, delivering high-resolution official movie covers via IMDb/Amazon CDN\n- Added intelligent media classification (Anime vs Movies vs TV Series)\n- Added strict AniList title validation to prevent false-positive anime covers for regular movies\n- Extended movie Rich Presence support to standalone video and trailer items\n- Added release year display in movie activity details and tooltip hover\n- Added playback progress event throttling and resilience improvements",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.1.0.0/jellyfin-discord-rich-presence.zip",
+        "checksum": "E1D11E70513FD59006E5158DAD907B60",
+        "timestamp": "2026-09-27T00:00:00Z"
+      },
+      {
         "version": "1.0.2.0",
         "changelog": "- Fixed Discord activity disappearing after a few seconds: the plugin now correctly drains Discord's acknowledgment response after each activity update, preventing pipe buffer overflow and connection drops",
         "targetAbi": "10.9.0.0",
