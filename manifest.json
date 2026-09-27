@@ -10,10 +10,10 @@
     "versions": [
       {
         "version": "1.1.0.0",
-        "changelog": "- Added IMDb poster resolver for non-anime movies, delivering high-resolution official movie covers via IMDb/Amazon CDN\n- Added intelligent media classification (Anime vs Movies vs TV Series)\n- Added strict AniList title validation to prevent false-positive anime covers for regular movies\n- Extended movie Rich Presence support to standalone video and trailer items\n- Added release year display in movie activity details and tooltip hover\n- Added playback progress event throttling and resilience improvements",
+        "changelog": "- **Full Non-Anime Movie Support with Official IMDb Posters**:\n- **Exact IMDb ID Lookup**:\n- **Smart Media Classification**:\n- **AniList Title Validation**:\n- **Extended Movie Detection**:\n- **Production Year & Hover Details**:\n- **Throttled Progress Events**: Playback progress events are now throttled to avoid flooding Discord's IPC pipe with redundant updates.\n- **Cache TTL & Housekeeping**: Artwork cache now uses time-to-live expiration and bounds in-memory entries, preventing stale entries and memory growth.\n- **Discord RPC Length Protection**: Sanitization ensures minimum string lengths to prevent Discord IPC drops.\n---",
         "targetAbi": "10.9.0.0",
         "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.1.0.0/jellyfin-discord-rich-presence.zip",
-        "checksum": "E1D11E70513FD59006E5158DAD907B60",
+        "checksum": "B943456C44095A465FB5007766138012",
         "timestamp": "2026-09-27T00:00:00Z"
       },
       {
