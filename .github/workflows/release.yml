@@ -84,6 +84,7 @@ jobs:
       - name: Commit updated manifest.json
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
+          branch: main
           commit_message: |
             chore(release): update manifest.json for ${{ steps.version.outputs.tag }} [skip ci]
           commit_user_name:  github-actions[bot]
