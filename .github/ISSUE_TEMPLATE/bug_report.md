@@ -5,6 +5,7 @@ title: '[Bug] '
 labels: bug
 assignees: ''
 ---
+<!-- Tip: Check docs/EXAMPLE_BUG_REPORT.md for a complete reference and filled example! -->
 
 ## Describe the bug
 
