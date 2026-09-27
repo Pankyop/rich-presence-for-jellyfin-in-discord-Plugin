@@ -3,6 +3,31 @@
 <head>
     <meta charset="utf-8">
     <title>Discord Rich Presence</title>
+    <style>
+        .drp-section {
+            margin: 1.5em 0;
+            padding: 1em 1.2em;
+            border-radius: 8px;
+            background: rgba(0,0,0,.06);
+        }
+        .drp-section-title {
+            font-size: .75rem;
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: var(--theme-accent-color, #52b54b);
+            margin: 0 0 .8em;
+        }
+        .drp-hint {
+            display: flex;
+            align-items: center;
+            gap: .5em;
+            font-size: .78rem;
+            opacity: .7;
+            margin-top: .4em;
+        }
+        .drp-hint svg { flex-shrink: 0; }
+    </style>
 </head>
 <body>
 <div id="DiscordRichPresenceConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
@@ -11,73 +36,127 @@
             <form id="DiscordRichPresenceConfigForm">
                 <div class="sectionTitleContainer flex align-items-center">
                     <h2 class="sectionTitle">Discord Rich Presence Settings</h2>
-                    <span class="badge badge-outline">v1.0.0</span>
                 </div>
 
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="chkEnabled" />
-                        <span>Enable Discord Rich Presence</span>
-                    </label>
-                    <div class="fieldDescription checkboxFieldDescription">
-                        Globally enables or disables Rich Presence updates to Discord clients.
+                <!-- ── Global ─────────────────────────────────────────────────── -->
+                <div class="drp-section">
+                    <p class="drp-section-title">General</p>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="chkEnabled" />
+                            <span>Enable Discord Rich Presence</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Globally enables or disables Rich Presence updates to Discord clients.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="txtAppId">Discord Application ID</label>
+                        <input is="emby-input" type="text" id="txtAppId" required />
+                        <div class="fieldDescription">
+                            The Client ID of your Discord Application from the
+                            <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Discord Developer Portal</a>.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="txtPollInterval">Poll Interval (seconds)</label>
+                        <input is="emby-input" type="number" id="txtPollInterval" min="1" max="60" required />
+                        <div class="fieldDescription">
+                            Interval between session state inspections. Recommended: 5&nbsp;seconds.
+                            Lower values do not increase Discord update frequency due to internal rate-limiting.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="txtPublicServerUrl">Public Server URL <em>(Optional)</em></label>
+                        <input is="emby-input" type="text" id="txtPublicServerUrl" placeholder="https://jellyfin.yourdomain.com" />
+                        <div class="fieldDescription">
+                            Publicly reachable HTTPS/HTTP address of this Jellyfin server.
+                            Required for Discord to display media artwork from your library.
+                            If omitted, a Jellyfin fallback icon is shown instead.
+                        </div>
                     </div>
                 </div>
 
-                <div class="inputContainer">
-                    <label class="inputLabel inputLabelUnfocused" for="txtAppId">Discord Application ID</label>
-                    <input is="emby-input" type="text" id="txtAppId" required />
-                    <div class="fieldDescription">
-                        The Client ID of your Discord Application from the Discord Developer Portal.
+                <!-- ── User Filter ─────────────────────────────────────────────── -->
+                <div class="drp-section">
+                    <p class="drp-section-title">&#128100; User Filter <em style="font-weight:400;text-transform:none;font-size:.8em;">(Multi-User Servers)</em></p>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="txtTargetUserId">Target Username or User ID</label>
+                        <input is="emby-input" type="text" id="txtTargetUserId" placeholder="Leave blank to use any active session" />
+                        <div class="fieldDescription">
+                            On shared servers with friends or family, another user's playback can overwrite your Discord activity.
+                            Enter your Jellyfin username (e.g. <code>Admin</code>) or your exact User&nbsp;ID (UUID) to restrict
+                            Rich Presence to your sessions only. Leave blank to use the first active session on the server.
+                        </div>
                     </div>
                 </div>
 
-                <div class="inputContainer">
-                    <label class="inputLabel inputLabelUnfocused" for="txtPollInterval">Poll Interval (seconds)</label>
-                    <input is="emby-input" type="number" id="txtPollInterval" min="1" max="60" required />
-                    <div class="fieldDescription">
-                        Interval between session state inspections. Recommended: 5 seconds.
+                <!-- ── Playback display ────────────────────────────────────────── -->
+                <div class="drp-section">
+                    <p class="drp-section-title">&#127916; Playback Display</p>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="chkShowEpisodeInfo" />
+                            <span>Display Season and Episode numbers</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Shows "S01E05 &bull; Episode Title" in the Discord activity status.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="chkShowMediaBanner" />
+                            <span>Display media banner and artwork</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Displays the show poster or movie artwork as the large Discord activity image.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="chkShowPlaybackPosition" />
+                            <span>Display elapsed playback time</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Shows current progress timestamp and duration (e.g. 12:30 / 45:00).
+                        </div>
                     </div>
                 </div>
 
-                <div class="inputContainer">
-                    <label class="inputLabel inputLabelUnfocused" for="txtPublicServerUrl">Public Server URL (Optional)</label>
-                    <input is="emby-input" type="text" id="txtPublicServerUrl" placeholder="https://jellyfin.yourdomain.com" />
-                    <div class="fieldDescription">
-                        Publicly reachable HTTPS/HTTP address of this Jellyfin server. Required for Discord to proxy and display media artwork (anime/movie/show covers). If omitted or running on localhost/LAN, official high-resolution fallback artwork is displayed.
+                <!-- ── Pause state ─────────────────────────────────────────────── -->
+                <div class="drp-section">
+                    <p class="drp-section-title">&#9208;&#65039; Pause Behaviour</p>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="chkShowPauseState" />
+                            <span>Show "&#9208; Paused" state in Discord</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            When enabled, your Discord activity shows a paused badge and icon instead of disappearing immediately.
+                            After the grace period below, the activity is removed automatically.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="txtPauseGracePeriod">Pause Grace Period (minutes)</label>
+                        <input is="emby-input" type="number" id="txtPauseGracePeriod" min="0" max="30" step="1" />
+                        <div class="fieldDescription">
+                            How long (in minutes) the paused activity stays visible in Discord before being cleared.
+                            Set to <strong>0</strong> to clear immediately (classic behaviour). Requires "Show Paused State" to be enabled.
+                        </div>
                     </div>
                 </div>
 
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="chkShowEpisodeInfo" />
-                        <span>Display Season and Episode numbers</span>
-                    </label>
-                    <div class="fieldDescription checkboxFieldDescription">
-                        Shows "S01E05 • Episode Title" in the Discord activity status.
-                    </div>
-                </div>
-
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="chkShowMediaBanner" />
-                        <span>Display media banner and artwork</span>
-                    </label>
-                    <div class="fieldDescription checkboxFieldDescription">
-                        Displays the show poster or movie artwork as the large Discord activity image.
-                    </div>
-                </div>
-
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="chkShowPlaybackPosition" />
-                        <span>Display elapsed playback time</span>
-                    </label>
-                    <div class="fieldDescription checkboxFieldDescription">
-                        Shows current progress timestamp and duration (e.g. 12:30 / 45:00).
-                    </div>
-                </div>
-
+                <!-- ── Save ───────────────────────────────────────────────────── -->
                 <div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                         <span>Save Settings</span>
@@ -96,12 +175,15 @@
             Dashboard.showLoadingMsg();
             ApiClient.getPluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId).then(function (config) {
                 document.querySelector('#chkEnabled').checked = config.Enabled !== false;
-                document.querySelector('#txtAppId').value = config.DiscordApplicationId || "123456789012345678";
+                document.querySelector('#txtAppId').value = config.DiscordApplicationId || "";
                 document.querySelector('#txtPollInterval').value = config.PollIntervalSeconds || 5;
                 document.querySelector('#txtPublicServerUrl').value = config.PublicServerUrl || "";
+                document.querySelector('#txtTargetUserId').value = config.TargetUserId || "";
                 document.querySelector('#chkShowEpisodeInfo').checked = config.ShowEpisodeInfo !== false;
                 document.querySelector('#chkShowMediaBanner').checked = config.ShowMediaBanner !== false;
                 document.querySelector('#chkShowPlaybackPosition').checked = config.ShowPlaybackPosition !== false;
+                document.querySelector('#chkShowPauseState').checked = config.ShowPauseState === true;
+                document.querySelector('#txtPauseGracePeriod').value = config.PauseGracePeriodMinutes != null ? config.PauseGracePeriodMinutes : 3;
                 Dashboard.hideLoadingMsg();
             });
         });
@@ -112,12 +194,15 @@
 
             ApiClient.getPluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId).then(function (config) {
                 config.Enabled = document.querySelector('#chkEnabled').checked;
-                config.DiscordApplicationId = document.querySelector('#txtAppId').value;
+                config.DiscordApplicationId = document.querySelector('#txtAppId').value.trim();
                 config.PollIntervalSeconds = parseInt(document.querySelector('#txtPollInterval').value, 10) || 5;
                 config.PublicServerUrl = document.querySelector('#txtPublicServerUrl').value.trim();
+                config.TargetUserId = document.querySelector('#txtTargetUserId').value.trim();
                 config.ShowEpisodeInfo = document.querySelector('#chkShowEpisodeInfo').checked;
                 config.ShowMediaBanner = document.querySelector('#chkShowMediaBanner').checked;
                 config.ShowPlaybackPosition = document.querySelector('#chkShowPlaybackPosition').checked;
+                config.ShowPauseState = document.querySelector('#chkShowPauseState').checked;
+                config.PauseGracePeriodMinutes = parseInt(document.querySelector('#txtPauseGracePeriod').value, 10) || 3;
 
                 ApiClient.updatePluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId, config).then(function (result) {
                     Dashboard.processPluginConfigurationUpdateResult(result);
