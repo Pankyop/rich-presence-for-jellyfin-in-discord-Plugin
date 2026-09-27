@@ -1,7 +1,7 @@
-# Labels definition file — used by the 🏷️ Sync Labels workflow
-# Synced automatically on the 1st of every month via .github/workflows/sync-labels.yml
+# Labels definition file — used by GitHub and the 🏷️ Sync Labels workflow
+# Synced automatically on schedule or manually via .github/workflows/sync-labels.yml
 
-# ── PR Classification Labels ─────────────────────────────────────────────────
+# ── PR Classification Labels (Required by PR Verification Workflow) ──────────
 
 - name: major-feature
   color: '7057ff'
@@ -27,50 +27,92 @@
   color: 'ededed'
   description: 'This PR should not appear in the changelog'
 
-# ── Issue Labels ─────────────────────────────────────────────────────────────
+# ── Core Issue & Request Types ───────────────────────────────────────────────
 
 - name: 'bug'
   color: 'd73a4a'
-  description: 'Something is not working'
+  description: 'Something is not working or behaving unexpectedly'
 
 - name: 'enhancement'
   color: 'a2eeef'
-  description: 'New feature or request'
+  description: 'New feature or functional enhancement request'
 
 - name: 'question'
   color: 'd876e3'
-  description: 'Further information is requested'
+  description: 'Support inquiry, configuration question or clarification'
 
-- name: 'help wanted'
-  color: '008672'
-  description: 'Extra attention is needed'
+- name: 'security'
+  color: 'b60205'
+  description: 'Security vulnerability or protection hardening'
+
+# ── Plugin Area / Component Labels ──────────────────────────────────────────
+
+- name: 'area: anime'
+  color: 'b388ff'
+  description: 'AniList GraphQL integration and anime rich presence'
+
+- name: 'area: movies'
+  color: 'ff9800'
+  description: 'IMDb / TMDB movie metadata and poster resolution'
+
+- name: 'area: shows'
+  color: '00bfa5'
+  description: 'TV Series, episodes, seasons and TVMaze artwork integration'
+
+- name: 'area: music'
+  color: 'ff4081'
+  description: 'Music tracks, albums, artist presence and covers'
+
+- name: 'area: discord-ipc'
+  color: '5865f2'
+  description: 'Discord local IPC pipe communication and rich activity payloads'
+
+- name: 'area: web-ui'
+  color: '3f51b5'
+  description: 'Jellyfin web dashboard configuration interface and settings'
+
+- name: 'area: session'
+  color: 'fbc02d'
+  description: 'Session monitoring, playback events, state changes and throttling'
+
+# ── Workflow & Status Labels ─────────────────────────────────────────────────
+
+- name: 'status: in progress'
+  color: 'fbca04'
+  description: 'Work or investigation is actively ongoing'
+
+- name: 'status: needs review'
+  color: '0075ca'
+  description: 'Ready for maintainer review or validation'
+
+- name: 'status: needs info'
+  color: 'd876e3'
+  description: 'Awaiting further reproduction steps or logs from author'
+
+- name: 'status: blocked'
+  color: 'b60205'
+  description: 'Blocked by external dependencies or upstream Jellyfin/Discord issue'
+
+# ── Community & Contribution Labels ──────────────────────────────────────────
 
 - name: 'good first issue'
   color: '7057ff'
-  description: 'Good for newcomers'
+  description: 'Good for newcomers wanting to contribute'
 
-- name: 'wontfix'
-  color: 'ffffff'
-  description: 'This will not be worked on'
+- name: 'help wanted'
+  color: '008672'
+  description: 'Extra maintainer or community help is requested'
+
+# ── Triage & Resolution Labels ───────────────────────────────────────────────
 
 - name: 'duplicate'
   color: 'cfd3d7'
-  description: 'This issue or PR already exists'
+  description: 'This issue or pull request already exists'
+
+- name: 'wontfix'
+  color: 'ffffff'
+  description: 'This will not be worked on or is out of scope'
 
 - name: 'invalid'
   color: 'e4e669'
-  description: 'This doesn''t seem right'
-
-# ── Status Labels ─────────────────────────────────────────────────────────────
-
-- name: 'in progress'
-  color: 'fbca04'
-  description: 'Currently being worked on'
-
-- name: 'needs review'
-  color: '0075ca'
-  description: 'Waiting for a reviewer'
-
-- name: 'blocked'
-  color: 'b60205'
-  description: 'Blocked by an external dependency'
+  description: 'Invalid, incomplete, or irreproducible'
