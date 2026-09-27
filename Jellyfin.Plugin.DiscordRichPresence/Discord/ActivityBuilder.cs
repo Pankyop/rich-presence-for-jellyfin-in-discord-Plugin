@@ -25,7 +25,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             string serverAddress,
             CancellationToken ct = default)
         {
-            if (item == null || isPaused)
+            if (item == null)
             {
                 return null;
             }
@@ -38,10 +38,10 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             return item.Type switch
             {
-                BaseItemKind.Movie or BaseItemKind.Video or BaseItemKind.Trailer => BuildMovieActivity(item, positionTicks, config, artworkUrl),
-                BaseItemKind.Episode => BuildEpisodeActivity(item, positionTicks, config, artworkUrl),
-                BaseItemKind.Audio => BuildAudioActivity(item, positionTicks, config, artworkUrl),
-                _ => BuildGenericActivity(item, positionTicks, config, artworkUrl)
+                BaseItemKind.Movie or BaseItemKind.Video or BaseItemKind.Trailer => BuildMovieActivity(item, positionTicks, isPaused, config, artworkUrl),
+                BaseItemKind.Episode => BuildEpisodeActivity(item, positionTicks, isPaused, config, artworkUrl),
+                BaseItemKind.Audio => BuildAudioActivity(item, positionTicks, isPaused, config, artworkUrl),
+                _ => BuildGenericActivity(item, positionTicks, isPaused, config, artworkUrl)
             };
         }
 
@@ -61,11 +61,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         private static DiscordActivity BuildMovieActivity(
             BaseItemDto movie,
             long? positionTicks,
+            bool isPaused,
             PluginConfiguration config,
             string? artworkUrl)
         {
             var title = Sanitize(movie.Name);
-            var (startUnix, endUnix) = CalculateTimestamps(positionTicks, movie.RunTimeTicks);
+            // Only compute playback timestamps when actively playing; paused state uses current time only.
+            var (startUnix, endUnix) = isPaused ? (null, (long?)null) : CalculateTimestamps(positionTicks, movie.RunTimeTicks);
 
             var activity = new DiscordActivity
             {
@@ -74,7 +76,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 Instance = false
             };
 
-            if (config.ShowPlaybackPosition && positionTicks.HasValue && movie.RunTimeTicks.HasValue)
+            if (isPaused)
+            {
+                activity.State = "⏸ Paused";
+            }
+            else if (config.ShowPlaybackPosition && positionTicks.HasValue && movie.RunTimeTicks.HasValue)
             {
                 var cur = FormatTime(TicksToSeconds(positionTicks.Value));
                 var total = FormatTime(TicksToSeconds(movie.RunTimeTicks.Value));
@@ -106,8 +112,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 {
                     LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(hoverText, 128),
-                    SmallImage = ArtworkResolver.DefaultPlayIcon,
-                    SmallText = "Watching on Jellyfin"
+                    SmallImage = isPaused ? ArtworkResolver.DefaultPauseIcon : ArtworkResolver.DefaultPlayIcon,
+                    SmallText = isPaused ? "Paused on Jellyfin" : "Watching on Jellyfin"
                 };
             }
 
@@ -117,6 +123,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         private static DiscordActivity BuildEpisodeActivity(
             BaseItemDto episode,
             long? positionTicks,
+            bool isPaused,
             PluginConfiguration config,
             string? artworkUrl)
         {
@@ -125,7 +132,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             var seasonNumber = episode.ParentIndexNumber ?? 1;
             var episodeNumber = episode.IndexNumber ?? 1;
 
-            var (startUnix, endUnix) = CalculateTimestamps(positionTicks, episode.RunTimeTicks);
+            var (startUnix, endUnix) = isPaused ? (null, (long?)null) : CalculateTimestamps(positionTicks, episode.RunTimeTicks);
 
             var activity = new DiscordActivity
             {
@@ -134,7 +141,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 Instance = false
             };
 
-            if (config.ShowEpisodeInfo)
+            if (isPaused)
+            {
+                activity.State = config.ShowEpisodeInfo
+                    ? Truncate($"⏸ S{seasonNumber:D2}E{episodeNumber:D2} • {episodeName}", 128)
+                    : "⏸ Paused";
+            }
+            else if (config.ShowEpisodeInfo)
             {
                 activity.State = Truncate($"S{seasonNumber:D2}E{episodeNumber:D2} • {episodeName}", 128);
             }
@@ -158,8 +171,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 {
                     LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(seriesName, 128),
-                    SmallImage = ArtworkResolver.DefaultPlayIcon,
-                    SmallText = "Watching on Jellyfin"
+                    SmallImage = isPaused ? ArtworkResolver.DefaultPauseIcon : ArtworkResolver.DefaultPlayIcon,
+                    SmallText = isPaused ? "Paused on Jellyfin" : "Watching on Jellyfin"
                 };
             }
 
@@ -169,6 +182,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         private static DiscordActivity BuildAudioActivity(
             BaseItemDto audio,
             long? positionTicks,
+            bool isPaused,
             PluginConfiguration config,
             string? artworkUrl)
         {
@@ -176,12 +190,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             var artistName = Sanitize(audio.Artists != null && audio.Artists.Count > 0 ? audio.Artists[0] : "Various Artists");
             var albumName = Sanitize(audio.Album ?? "Music");
 
-            var (startUnix, endUnix) = CalculateTimestamps(positionTicks, audio.RunTimeTicks);
+            var (startUnix, endUnix) = isPaused ? (null, (long?)null) : CalculateTimestamps(positionTicks, audio.RunTimeTicks);
 
             var activity = new DiscordActivity
             {
                 Details = Truncate(trackName, 128),
-                State = Truncate($"♫ {artistName}", 128),
+                State = isPaused ? "⏸ Paused" : Truncate($"♫ {artistName}", 128),
                 Type = 2, // Listening
                 Instance = false
             };
@@ -201,8 +215,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 {
                     LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(albumName, 128),
-                    SmallImage = ArtworkResolver.DefaultPlayIcon,
-                    SmallText = "Listening on Jellyfin"
+                    SmallImage = isPaused ? ArtworkResolver.DefaultPauseIcon : ArtworkResolver.DefaultPlayIcon,
+                    SmallText = isPaused ? "Paused on Jellyfin" : "Listening on Jellyfin"
                 };
             }
 
@@ -212,16 +226,17 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         private static DiscordActivity BuildGenericActivity(
             BaseItemDto item,
             long? positionTicks,
+            bool isPaused,
             PluginConfiguration config,
             string? artworkUrl)
         {
             var title = Sanitize(item.Name);
-            var (startUnix, endUnix) = CalculateTimestamps(positionTicks, item.RunTimeTicks);
+            var (startUnix, endUnix) = isPaused ? (null, (long?)null) : CalculateTimestamps(positionTicks, item.RunTimeTicks);
 
             var activity = new DiscordActivity
             {
                 Details = Truncate(title, 128),
-                State = "Watching on Jellyfin",
+                State = isPaused ? "⏸ Paused" : "Watching on Jellyfin",
                 Type = 3,
                 Instance = false
             };
@@ -241,8 +256,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 {
                     LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
                     LargeText = Truncate(title, 128),
-                    SmallImage = ArtworkResolver.DefaultPlayIcon,
-                    SmallText = "Jellyfin"
+                    SmallImage = isPaused ? ArtworkResolver.DefaultPauseIcon : ArtworkResolver.DefaultPlayIcon,
+                    SmallText = isPaused ? "Paused on Jellyfin" : "Watching on Jellyfin"
                 };
             }
 
