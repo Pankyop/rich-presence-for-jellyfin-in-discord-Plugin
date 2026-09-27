@@ -120,6 +120,16 @@ The output zip file will be generated in `dist/jellyfin-discord-rich-presence.zi
 
 ---
 
+## 🤝 Issues, Feedback & Feature Requests
+
+Found a bug or have an idea to improve the plugin? We welcome your input!
+To help us resolve problems or review proposals quickly, please refer to our example templates:
+
+- 🐛 **Bug Reports**: Use the [Bug Report Example & Template](docs/EXAMPLE_BUG_REPORT.md) to provide reproducible details and Jellyfin server logs.
+- 💡 **Feature & Modification Requests**: Use the [Feature Request Example & Template](docs/EXAMPLE_FEATURE_REQUEST.md) to propose enhancements, new metadata providers, or UI toggles.
+
+---
+
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).
