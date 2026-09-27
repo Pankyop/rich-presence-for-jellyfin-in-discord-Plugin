@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 "
 Publishes a GitHub release and uploads the compiled plugin ZIP.
 Always verifies the remote checksum after upload -- fails loudly on mismatch.
@@ -43,8 +43,8 @@ def main():
     notes_file = root / 'RELEASE_NOTES.md'
 
     repo = 'Pankyop/rich-presence-for-jellyfin-in-discord-Plugin'
-    tag = 'v1.0.2.0'
-    release_name = 'Release v1.0.2.0 - Stability Fix: Discord Connection Drop'
+    tag = 'v1.1.0.0'
+    release_name = 'Release v1.1.0.0 - Movie Rich Presence & IMDb Artwork Support'
 
     if not zip_path.exists():
         print(f'ERROR: {zip_path} not found. Run python scripts/build.py first.')
