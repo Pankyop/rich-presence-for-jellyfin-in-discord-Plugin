@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/assets/logo.png",
     "versions": [
       {
+        "version": "1.2.0.0",
+        "changelog": "- **Fix: Discord presence dropping after 1-2 minutes of playback** — replaced frequent polling updates with smart change-detection: only sends a new IPC frame when the item changes, seek is detected, or the 20-second keepalive fires\n- **Fix: IPC rate-limit protection** — Discord's ~5 req/20s limit is now respected; redundant progress events are silently dropped\n- **New: User Filter** — bind Rich Presence to a specific Jellyfin username or User ID, preventing other users on shared servers from overwriting your Discord activity\n- **New: Pause State** — shows an ⏸ Paused badge in Discord instead of clearing immediately; a configurable grace period (default 3 min) removes the activity after you've been paused a while\n- **New: Improved settings page** — sections for General, User Filter, Playback Display and Pause Behaviour; better descriptions for all options\n---",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.2.0.0/jellyfin-discord-rich-presence.zip",
+        "checksum": "564DDA380FB6D4A8B3C21F8A7F3E0B3D",
+        "timestamp": "2026-09-27T00:00:00Z"
+      },
+      {
         "version": "1.1.0.0",
         "changelog": "- **Full Non-Anime Movie Support with Official IMDb Posters**:\n- **Exact IMDb ID Lookup**:\n- **Smart Media Classification**:\n- **AniList Title Validation**:\n- **Extended Movie Detection**:\n- **Production Year & Hover Details**:\n- **Throttled Progress Events**: Playback progress events are now throttled to avoid flooding Discord's IPC pipe with redundant updates.\n- **Cache TTL & Housekeeping**: Artwork cache now uses time-to-live expiration and bounds in-memory entries, preventing stale entries and memory growth.\n- **Discord RPC Length Protection**: Sanitization ensures minimum string lengths to prevent Discord IPC drops.\n---",
         "targetAbi": "10.9.0.0",
