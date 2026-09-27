@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -100,20 +101,58 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 CleanExpiredCache(now);
             }
 
+            var isAnime = IsAnime(item);
+            var isMovie = item.Type == BaseItemKind.Movie || item.Type == BaseItemKind.Video || item.Type == BaseItemKind.Trailer;
+            var isTv = item.Type == BaseItemKind.Episode || item.Type == BaseItemKind.Series || item.Type == BaseItemKind.Season;
+            string? imdbId = null;
+            if (item.ProviderIds != null && item.ProviderIds.TryGetValue("Imdb", out var rawImdb) && !string.IsNullOrWhiteSpace(rawImdb))
+            {
+                imdbId = rawImdb;
+            }
+
             try
             {
-                // 4. Try AniList GraphQL (primary for Anime series and Anime movies)
-                using var aniListCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                aniListCts.CancelAfter(TimeSpan.FromSeconds(2));
-                var anilistPoster = await QueryAniListAsync(searchTitle, aniListCts.Token).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(anilistPoster))
+                // 4. Exact IMDb ID match if available (highest accuracy for movies and TV)
+                if (!string.IsNullOrWhiteSpace(imdbId))
                 {
-                    _cache[searchTitle] = new CacheEntry(anilistPoster, now.AddHours(24));
-                    return anilistPoster;
+                    using var imdbIdCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    imdbIdCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    var imdbPoster = await QueryImdbAsync(imdbId, searchTitle, item.ProductionYear, imdbIdCts.Token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(imdbPoster))
+                    {
+                        _cache[searchTitle] = new CacheEntry(imdbPoster, now.AddHours(24));
+                        return imdbPoster;
+                    }
                 }
 
-                // 5. Try TVMaze (for general TV series)
-                if (item.Type == BaseItemKind.Episode || item.Type == BaseItemKind.Series)
+                // 5. If content is a Movie and not explicitly anime, query IMDb by title first
+                if (isMovie && !isAnime)
+                {
+                    using var imdbTitleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    imdbTitleCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    var imdbPoster = await QueryImdbAsync(null, searchTitle, item.ProductionYear, imdbTitleCts.Token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(imdbPoster))
+                    {
+                        _cache[searchTitle] = new CacheEntry(imdbPoster, now.AddHours(24));
+                        return imdbPoster;
+                    }
+                }
+
+                // 6. If Anime (or non-movie), try AniList with title validation
+                if (isAnime || !isMovie)
+                {
+                    using var aniListCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    aniListCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    var anilistPoster = await QueryAniListAsync(searchTitle, aniListCts.Token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(anilistPoster))
+                    {
+                        _cache[searchTitle] = new CacheEntry(anilistPoster, now.AddHours(24));
+                        return anilistPoster;
+                    }
+                }
+
+                // 7. Try TVMaze (for TV series)
+                if (isTv)
                 {
                     using var tvMazeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     tvMazeCts.CancelAfter(TimeSpan.FromSeconds(2));
@@ -125,7 +164,20 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     }
                 }
 
-                // 6. Try Wikipedia Summary API (for Movies and general media)
+                // 8. Fallback: try IMDb by title if not already tried
+                if (!isMovie || isAnime)
+                {
+                    using var imdbFallbackCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    imdbFallbackCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    var imdbPoster = await QueryImdbAsync(null, searchTitle, item.ProductionYear, imdbFallbackCts.Token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(imdbPoster))
+                    {
+                        _cache[searchTitle] = new CacheEntry(imdbPoster, now.AddHours(24));
+                        return imdbPoster;
+                    }
+                }
+
+                // 9. Try Wikipedia Summary API (for general media)
                 using var wikiCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 wikiCts.CancelAfter(TimeSpan.FromSeconds(2));
                 var wikiPoster = await QueryWikipediaAsync(searchTitle, wikiCts.Token).ConfigureAwait(false);
@@ -145,6 +197,35 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             return DefaultJellyfinIcon;
         }
 
+        private static bool IsAnime(BaseItemDto item)
+        {
+            if (item.ProviderIds != null)
+            {
+                if (item.ProviderIds.ContainsKey("AniList") ||
+                    item.ProviderIds.ContainsKey("AniDB") ||
+                    item.ProviderIds.ContainsKey("AniSearch") ||
+                    item.ProviderIds.ContainsKey("Mal") ||
+                    item.ProviderIds.ContainsKey("MyAnimeList") ||
+                    item.ProviderIds.ContainsKey("Kitsu"))
+                {
+                    return true;
+                }
+            }
+
+            if (item.Genres != null)
+            {
+                foreach (var g in item.Genres)
+                {
+                    if (string.Equals(g, "Anime", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         private static void CleanExpiredCache(DateTimeOffset now)
         {
             foreach (var kvp in _cache)
@@ -158,19 +239,90 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
         private static string GetSearchTitle(BaseItemDto item)
         {
+            string raw;
             if (item.Type == BaseItemKind.Episode)
             {
-                return !string.IsNullOrWhiteSpace(item.SeriesName) ? item.SeriesName.Trim() : item.Name?.Trim() ?? string.Empty;
+                raw = !string.IsNullOrWhiteSpace(item.SeriesName) ? item.SeriesName.Trim() : item.Name?.Trim() ?? string.Empty;
+            }
+            else
+            {
+                raw = item.Name?.Trim() ?? string.Empty;
             }
 
-            return item.Name?.Trim() ?? string.Empty;
+            var cleaned = System.Text.RegularExpressions.Regex.Replace(raw, @"\s*\(\d{4}\)$", "").Trim();
+            return string.IsNullOrWhiteSpace(cleaned) ? raw : cleaned;
+        }
+
+        private static async Task<string?> QueryImdbAsync(string? imdbId, string title, int? year, CancellationToken ct)
+        {
+            try
+            {
+                string url;
+                if (!string.IsNullOrWhiteSpace(imdbId) && imdbId.StartsWith("tt", StringComparison.OrdinalIgnoreCase))
+                {
+                    url = $"https://v3.sg.media-imdb.com/suggestion/t/{Uri.EscapeDataString(imdbId.Trim().ToLowerInvariant())}.json";
+                }
+                else
+                {
+                    var cleanTitle = System.Text.RegularExpressions.Regex.Replace(title.ToLowerInvariant(), @"[^a-z0-9\s]", "").Trim();
+                    var q = Uri.EscapeDataString(cleanTitle.Replace(' ', '_'));
+                    if (string.IsNullOrWhiteSpace(q))
+                    {
+                        return null;
+                    }
+
+                    var firstChar = q[0];
+                    url = $"https://v3.sg.media-imdb.com/suggestion/{firstChar}/{q}.json";
+                }
+
+                using var response = await _httpClient.GetAsync(url, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                using var doc = JsonDocument.Parse(responseBody);
+
+                if (doc.RootElement.TryGetProperty("d", out var d) && d.ValueKind == JsonValueKind.Array)
+                {
+                    string? firstFallback = null;
+                    foreach (var item in d.EnumerateArray())
+                    {
+                        if (item.TryGetProperty("i", out var i) && i.TryGetProperty("imageUrl", out var imgUrlProp))
+                        {
+                            var imgUrl = imgUrlProp.GetString();
+                            if (!string.IsNullOrWhiteSpace(imgUrl))
+                            {
+                                if (firstFallback == null)
+                                {
+                                    firstFallback = imgUrl;
+                                }
+
+                                if (year.HasValue && item.TryGetProperty("y", out var yProp) && yProp.GetInt32() == year.Value)
+                                {
+                                    return imgUrl;
+                                }
+                            }
+                        }
+                    }
+
+                    return firstFallback;
+                }
+            }
+            catch
+            {
+                // Non-critical fallback
+            }
+
+            return null;
         }
 
         private static async Task<string?> QueryAniListAsync(string title, CancellationToken ct)
         {
             try
             {
-                const string query = "query ($search: String) { Media (search: $search, type: ANIME) { coverImage { extraLarge large } } }";
+                const string query = "query ($search: String) { Media (search: $search, type: ANIME) { title { romaji english native } coverImage { extraLarge large } } }";
                 var payload = new
                 {
                     query,
@@ -191,17 +343,32 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
                 if (doc.RootElement.TryGetProperty("data", out var data) &&
                     data.TryGetProperty("Media", out var media) &&
-                    media.ValueKind == JsonValueKind.Object &&
-                    media.TryGetProperty("coverImage", out var cover))
+                    media.ValueKind == JsonValueKind.Object)
                 {
-                    if (cover.TryGetProperty("large", out var large) && !string.IsNullOrWhiteSpace(large.GetString()))
+                    // Validate title to prevent AniList returning random fuzzy matches for non-anime
+                    if (media.TryGetProperty("title", out var titleObj))
                     {
-                        return large.GetString();
+                        var romaji = titleObj.TryGetProperty("romaji", out var r) ? r.GetString() : null;
+                        var english = titleObj.TryGetProperty("english", out var e) ? e.GetString() : null;
+                        var native = titleObj.TryGetProperty("native", out var n) ? n.GetString() : null;
+
+                        if (!IsAnimeTitleMatch(title, romaji, english, native))
+                        {
+                            return null;
+                        }
                     }
 
-                    if (cover.TryGetProperty("extraLarge", out var extraLarge) && !string.IsNullOrWhiteSpace(extraLarge.GetString()))
+                    if (media.TryGetProperty("coverImage", out var cover))
                     {
-                        return extraLarge.GetString();
+                        if (cover.TryGetProperty("large", out var large) && !string.IsNullOrWhiteSpace(large.GetString()))
+                        {
+                            return large.GetString();
+                        }
+
+                        if (cover.TryGetProperty("extraLarge", out var extraLarge) && !string.IsNullOrWhiteSpace(extraLarge.GetString()))
+                        {
+                            return extraLarge.GetString();
+                        }
                     }
                 }
             }
@@ -211,6 +378,41 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             }
 
             return null;
+        }
+
+        private static bool IsAnimeTitleMatch(string query, string? romaji, string? english, string? native)
+        {
+            var cleanQuery = System.Text.RegularExpressions.Regex.Replace(query.ToLowerInvariant(), @"[^a-z0-9]", "");
+            if (string.IsNullOrWhiteSpace(cleanQuery))
+            {
+                return true;
+            }
+
+            foreach (var cand in new[] { romaji, english, native })
+            {
+                if (string.IsNullOrWhiteSpace(cand))
+                {
+                    continue;
+                }
+
+                var cleanCand = System.Text.RegularExpressions.Regex.Replace(cand.ToLowerInvariant(), @"[^a-z0-9]", "");
+                if (cleanCand.Contains(cleanQuery) || cleanQuery.Contains(cleanCand))
+                {
+                    return true;
+                }
+            }
+
+            // Word overlap check
+            var queryWords = query.Split(new[] { ' ', '-', ':', '_' }, StringSplitOptions.RemoveEmptyEntries);
+            var meaningfulWords = queryWords.Where(w => w.Length > 3).ToList();
+            if (meaningfulWords.Count == 0)
+            {
+                meaningfulWords = queryWords.ToList();
+            }
+
+            var combinedCand = $"{romaji} {english} {native}".ToLowerInvariant();
+            var matches = meaningfulWords.Count(w => combinedCand.Contains(w.ToLowerInvariant()));
+            return matches > 0;
         }
 
         private static async Task<string?> QueryTvMazeAsync(string title, CancellationToken ct)
