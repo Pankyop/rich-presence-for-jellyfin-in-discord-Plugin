@@ -4,7 +4,7 @@ about: Suggest an idea or enhancement for the plugin
 title: '[Feature] '
 labels: enhancement
 assignees: ''
----
+<!-- Tip: Check docs/EXAMPLE_FEATURE_REQUEST.md for a complete reference and filled example! -->
 
 ## Is your feature request related to a problem?
 
