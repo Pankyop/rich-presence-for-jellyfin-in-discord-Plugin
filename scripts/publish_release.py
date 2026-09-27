@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"
+"""
 Publishes a GitHub release and uploads the compiled plugin ZIP.
 Always verifies the remote checksum after upload -- fails loudly on mismatch.
-"
+"""
 
 import hashlib
 import json
@@ -80,10 +80,10 @@ def main():
             'tag_name': tag, 'target_commitish': 'main', 'name': release_name,
             'body': body_text, 'draft': False, 'prerelease': False
         })
-        print(f'    Release created: ID={release[id]}')
+        print(f"    Release created: ID={release['id']}")
     else:
-        print(f'==> Updating release {tag} (ID={release[id]})...')
-        release = api(f'https://api.github.com/repos/{repo}/releases/{release[id]}', headers, 'PATCH', {
+        print(f"==> Updating release {tag} (ID={release['id']})...")
+        release = api(f"https://api.github.com/repos/{repo}/releases/{release['id']}", headers, 'PATCH', {
             'name': release_name, 'body': body_text
         })
 
@@ -91,8 +91,8 @@ def main():
     asset_name = 'jellyfin-discord-rich-presence.zip'
     existing = {a['name']: a['id'] for a in release.get('assets', [])}
     if asset_name in existing:
-        print(f'==> Removing old asset (ID={existing[asset_name]})...')
-        api(f'https://api.github.com/repos/{repo}/releases/assets/{existing[asset_name]}', headers, 'DELETE')
+        print(f"==> Removing old asset (ID={existing[asset_name]})...")
+        api(f"https://api.github.com/repos/{repo}/releases/assets/{existing[asset_name]}", headers, 'DELETE')
 
     # Upload using len(zip_data) as Content-Length
     print(f'==> Uploading {len(zip_data):,} bytes...')
@@ -106,14 +106,14 @@ def main():
     req = urllib.request.Request(upload_url, data=zip_data, headers=upload_headers)
     with urllib.request.urlopen(req) as resp:
         uploaded = json.loads(resp.read().decode('utf-8'))
-    print(f'    Uploaded: {uploaded[size]:,} bytes  ID={uploaded[id]}')
+    print(f"    Uploaded: {uploaded['size']:,} bytes  ID={uploaded['id']}")
 
     # MANDATORY: verify remote checksum
     print('==> Verifying remote checksum...')
     verify_headers = dict(headers)
     verify_headers['Accept'] = 'application/octet-stream'
     req = urllib.request.Request(
-        f'https://api.github.com/repos/{repo}/releases/assets/{uploaded[id]}',
+        f"https://api.github.com/repos/{repo}/releases/assets/{uploaded['id']}",
         headers=verify_headers
     )
     with urllib.request.urlopen(req) as resp:
@@ -134,8 +134,8 @@ def main():
     print('')
     print('=' * 60)
     print('  SUCCESS: Release published and checksum verified!')
-    print(f'  URL:      {release[html_url]}')
-    print(f'  Download: {uploaded[browser_download_url]}')
+    print(f"  URL:      {release['html_url']}")
+    print(f"  Download: {uploaded['browser_download_url']}")
     print(f'  MD5:      {local_md5}  <-- use this in manifest.json')
     print('=' * 60)
 
