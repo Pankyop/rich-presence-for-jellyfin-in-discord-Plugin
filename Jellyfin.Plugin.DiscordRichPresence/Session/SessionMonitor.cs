@@ -27,6 +27,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         private Task? _pollLoopTask;
         private bool _isDisposed;
 
+        private DateTimeOffset _lastUpdatedUtc = DateTimeOffset.MinValue;
+        private Guid? _lastItemId;
+        private bool _lastIsPaused;
+        private readonly object _throttleLock = new();
+
         public SessionMonitor(
             ISessionManager sessionManager,
             IServerConfigurationManager serverConfigurationManager,
@@ -105,12 +110,26 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 
         private async void OnPlaybackStart(object? sender, PlaybackProgressEventArgs e)
         {
-            await HandlePlaybackEventAsync(e).ConfigureAwait(false);
+            try
+            {
+                await HandlePlaybackEventAsync(e, isProgressEvent: false).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Error handling PlaybackStart event: {Message}", ex.Message);
+            }
         }
 
         private async void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
         {
-            await HandlePlaybackEventAsync(e).ConfigureAwait(false);
+            try
+            {
+                await HandlePlaybackEventAsync(e, isProgressEvent: true).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("Error handling PlaybackProgress event: {Message}", ex.Message);
+            }
         }
 
         private async void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
@@ -127,6 +146,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                 var activeSession = _sessionManager.Sessions.FirstOrDefault(s => s.NowPlayingItem != null && !s.PlayState.IsPaused);
                 if (activeSession == null)
                 {
+                    lock (_throttleLock)
+                    {
+                        _lastItemId = null;
+                        _lastUpdatedUtc = DateTimeOffset.MinValue;
+                    }
+
                     await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
                 }
             }
@@ -136,7 +161,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             }
         }
 
-        private async Task HandlePlaybackEventAsync(PlaybackProgressEventArgs e)
+        private async Task HandlePlaybackEventAsync(PlaybackProgressEventArgs e, bool isProgressEvent)
         {
             try
             {
@@ -149,8 +174,29 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                 var item = e.Session?.NowPlayingItem;
                 if (item == null || e.IsPaused)
                 {
+                    lock (_throttleLock)
+                    {
+                        _lastItemId = null;
+                        _lastUpdatedUtc = DateTimeOffset.MinValue;
+                    }
+
                     await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
                     return;
+                }
+
+                // Throttling: If it's a progress tick of the same item without pause state change,
+                // do not send IPC frames to Discord faster than once every 4 seconds.
+                if (isProgressEvent)
+                {
+                    lock (_throttleLock)
+                    {
+                        if (_lastItemId == item.Id &&
+                            _lastIsPaused == e.IsPaused &&
+                            (DateTimeOffset.UtcNow - _lastUpdatedUtc).TotalSeconds < 4.0)
+                        {
+                            return;
+                        }
+                    }
                 }
 
                 await UpdatePresenceAsync(item, e.PlaybackPositionTicks, e.IsPaused, config, _cts.Token).ConfigureAwait(false);
@@ -168,6 +214,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             {
                 if (_discordClient.IsConnected)
                 {
+                    lock (_throttleLock)
+                    {
+                        _lastItemId = null;
+                        _lastUpdatedUtc = DateTimeOffset.MinValue;
+                    }
+
                     await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
                 }
                 return;
@@ -190,6 +242,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         {
             if (item == null)
             {
+                lock (_throttleLock)
+                {
+                    _lastItemId = null;
+                    _lastUpdatedUtc = DateTimeOffset.MinValue;
+                }
+
                 await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
                 return;
             }
@@ -199,6 +257,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 
             if (activity == null)
             {
+                lock (_throttleLock)
+                {
+                    _lastItemId = null;
+                    _lastUpdatedUtc = DateTimeOffset.MinValue;
+                }
+
                 await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
                 return;
             }
@@ -212,20 +276,21 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                 }
             }
 
-            await _discordClient.SetActivityAsync(activity, ct).ConfigureAwait(false);
+            var sent = await _discordClient.SetActivityAsync(activity, ct).ConfigureAwait(false);
+            if (sent)
+            {
+                lock (_throttleLock)
+                {
+                    _lastItemId = item.Id;
+                    _lastIsPaused = isPaused;
+                    _lastUpdatedUtc = DateTimeOffset.UtcNow;
+                }
+            }
         }
 
         private string GetServerBaseUrl()
         {
-            try
-            {
-                var serverConfig = _serverConfigurationManager.Configuration;
-                return "http://localhost:8096";
-            }
-            catch
-            {
-                return "http://localhost:8096";
-            }
+            return "http://localhost:8096";
         }
 
         public void Dispose()
@@ -242,8 +307,6 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             _sessionManager.PlaybackProgress -= OnPlaybackProgress;
 
             _cts.Cancel();
-            _cts.Dispose();
-            _discordClient.Dispose();
         }
     }
 }
