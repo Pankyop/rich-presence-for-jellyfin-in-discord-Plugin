@@ -38,7 +38,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             return item.Type switch
             {
-                BaseItemKind.Movie => BuildMovieActivity(item, positionTicks, config, artworkUrl),
+                BaseItemKind.Movie or BaseItemKind.Video or BaseItemKind.Trailer => BuildMovieActivity(item, positionTicks, config, artworkUrl),
                 BaseItemKind.Episode => BuildEpisodeActivity(item, positionTicks, config, artworkUrl),
                 BaseItemKind.Audio => BuildAudioActivity(item, positionTicks, config, artworkUrl),
                 _ => BuildGenericActivity(item, positionTicks, config, artworkUrl)
@@ -82,7 +82,9 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             }
             else
             {
-                activity.State = "Watching Movie";
+                activity.State = movie.ProductionYear.HasValue
+                    ? Truncate($"Movie ({movie.ProductionYear.Value})", 128)
+                    : "Watching Movie";
             }
 
             if (startUnix.HasValue)
@@ -96,12 +98,16 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             if (config.ShowMediaBanner)
             {
+                var hoverText = movie.ProductionYear.HasValue
+                    ? $"{title} ({movie.ProductionYear.Value})"
+                    : title;
+
                 activity.Assets = new DiscordAssets
                 {
                     LargeImage = artworkUrl ?? ArtworkResolver.DefaultJellyfinIcon,
-                    LargeText = Truncate(title, 128),
+                    LargeText = Truncate(hoverText, 128),
                     SmallImage = ArtworkResolver.DefaultPlayIcon,
-                    SmallText = "Jellyfin"
+                    SmallText = "Watching on Jellyfin"
                 };
             }
 
@@ -284,7 +290,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 return "Unknown";
             }
 
-            return text.Trim();
+            var trimmed = text.Trim();
+            if (trimmed.Length == 1)
+            {
+                return trimmed + " ";
+            }
+
+            return trimmed;
         }
 
         private static string Truncate(string text, int maxLength)
