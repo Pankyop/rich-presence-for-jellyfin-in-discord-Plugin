@@ -22,6 +22,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
     {
         public const string DefaultJellyfinIcon = "https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/web/icon-transparent.png";
         public const string DefaultPlayIcon = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/25b6.png";
+        public const string DefaultPauseIcon = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/23f8.png";
 
         private sealed class CacheEntry
         {
