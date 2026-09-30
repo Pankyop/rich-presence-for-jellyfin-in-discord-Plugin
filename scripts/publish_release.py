@@ -37,6 +37,48 @@ def api(url, headers, method='GET', payload=None):
         return None
 
 
+def _extract_release_section(notes_file: Path, tag: str) -> str:
+    """
+    Parses RELEASE_NOTES.md and returns only the section for *tag*.
+
+    Each release section starts with a line like:
+        ## ... vX.X.X.X ...
+    and ends at the next `---` separator OR the next `##` heading.
+
+    If the section cannot be found the full file is returned as fallback
+    (better than an empty body).
+    """
+    version = tag.lstrip('v')          # "v1.2.0.0" → "1.2.0.0"
+
+    if not notes_file.exists():
+        return f'Release {tag}'
+
+    lines = notes_file.read_text(encoding='utf-8').splitlines(keepends=True)
+
+    start = None
+    for i, line in enumerate(lines):
+        # Match any ## heading that contains the exact version string
+        if line.startswith('##') and version in line:
+            start = i
+            break
+
+    if start is None:
+        print(f'  WARNING: Could not find section for {tag} in RELEASE_NOTES.md — using full file.')
+        return ''.join(lines)
+
+    section = []
+    for line in lines[start:]:
+        # Stop at the next horizontal rule separator between releases
+        if line.strip() == '---':
+            break
+        # Stop if we hit another version heading (but not the one we started on)
+        if line.startswith('##') and version not in line and section:
+            break
+        section.append(line)
+
+    return ''.join(section).strip()
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     zip_path = root / 'dist' / 'jellyfin-discord-rich-presence.zip'
@@ -64,7 +106,7 @@ def main():
         'Accept': 'application/vnd.github.v3+json'
     }
 
-    body_text = notes_file.read_text(encoding='utf-8') if notes_file.exists() else f'Release {tag}'
+    body_text = _extract_release_section(notes_file, tag)
 
     # Get or create release
     release = None
