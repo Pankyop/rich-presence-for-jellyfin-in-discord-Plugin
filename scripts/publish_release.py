@@ -43,8 +43,8 @@ def main():
     notes_file = root / 'RELEASE_NOTES.md'
 
     repo = 'Pankyop/rich-presence-for-jellyfin-in-discord-Plugin'
-    tag = 'v1.1.0.0'
-    release_name = 'Release v1.1.0.0 - Movie Rich Presence & IMDb Artwork Support'
+    tag = 'v1.2.0.0'
+    release_name = 'Release v1.2.0.0 - IPC Fix, User Filter & Pause State'
 
     if not zip_path.exists():
         print(f'ERROR: {zip_path} not found. Run python scripts/build.py first.')
