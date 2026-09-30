@@ -1,3 +1,52 @@
+## ⚡ v1.2.0.0 — IPC Fix, User Filter & Pause State (2026-09-27)
+
+### 🐛 Bug Fixes
+
+- **Fixed: Discord Rich Presence disappearing after 1-2 minutes of playback**
+  The root cause was Discord's IPC rate-limit (~5 frames per 20 seconds). The plugin was sending a new frame on every progress tick (every few seconds), which caused Discord to silently drop the connection.
+  The session monitor now uses **smart change-detection**: a new IPC frame is sent only when the playing item changes, the user seeks, or the 20-second keepalive interval elapses — fully within Discord's rate limits.
+
+- **Fixed: seek detection**
+  Position jumps larger than 5 seconds are now correctly identified as user-seeks, triggering an immediate presence refresh.
+
+### 🌟 What's New
+
+- **User Filter (Multi-User Servers)**
+  On shared Jellyfin servers (e.g. with friends or family), another user's playback could overwrite the host's Discord activity. You can now set a **Target Username or User ID** in the settings page to bind Rich Presence to your own sessions only.
+
+- **⏸ Pause State with Grace Period**
+  Instead of clearing the Discord activity immediately when media is paused, the plugin now optionally shows a **⏸ Paused** badge. A configurable grace period (default: 3 minutes) keeps the paused state visible; after it expires, Discord is cleared automatically.
+  > Disable "Show Paused State" for the classic immediate-clear behaviour.
+
+- **Improved Settings Page**
+  The plugin configuration page has been reorganised into clear sections:
+  - **General** — Application ID, poll interval, public server URL
+  - **User Filter** — Target username / user ID
+  - **Playback Display** — Episode info, media banner, elapsed time
+  - **Pause Behaviour** — Show pause state, grace period (minutes)
+
+### 📦 Installation & Verification
+
+#### Option A: Automatic via Plugin Repository (Recommended)
+Add this repository manifest to your Jellyfin server:
+```text
+https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/manifest.json
+```
+Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update with one click.
+
+#### Option B: Manual Installation
+1. Download `jellyfin-discord-rich-presence.zip` below.
+2. Extract the archive into your Jellyfin `plugins/DiscordRichPresence/` directory.
+3. Restart Jellyfin Server.
+
+### 🔐 Integrity Checksums
+| Algorithm | Checksum |
+|---|---|
+| **MD5** *(Jellyfin Package Manager)* | `564DDA380FB6D4A8B3C21F8A7F3E0B3D` |
+| **SHA256** | `c662f3db44d47286ee99ceb143e26b494b921c17c06510176ed248f959dc31bf` |
+
+---
+
 ## 🎬 v1.1.0.0 — Movie Rich Presence & IMDb Artwork Support (2026-09-27)
 
 ### 🌟 What's New
