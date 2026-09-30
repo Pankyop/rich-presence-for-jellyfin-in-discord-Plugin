@@ -54,10 +54,18 @@
 
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="txtAppId">Discord Application ID</label>
-                        <input is="emby-input" type="text" id="txtAppId" required />
+                        <input is="emby-input" type="text" id="txtAppId" required placeholder="e.g. 1234567890123456789" />
                         <div class="fieldDescription">
-                            The Client ID of your Discord Application from the
-                            <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Discord Developer Portal</a>.
+                            A numeric ID that tells Discord which application to show in your profile (name, icon, artwork).
+                            <br><br>
+                            <strong>How to get it:</strong>
+                            <ol style="margin:.4em 0 .4em 1.2em;padding:0;">
+                                <li>Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Discord Developer Portal</a> and sign in.</li>
+                                <li>Click <strong>New Application</strong>, give it any name (e.g. <em>Jellyfin</em>), and confirm.</li>
+                                <li>On the application page, copy the <strong>Application ID</strong> (under &ldquo;General Information&rdquo;).</li>
+                                <li>Paste it in the field above and save.</li>
+                            </ol>
+                            The ID is a 17&ndash;19 digit number. You can also upload a custom icon in the Developer Portal &mdash; it will appear as the large image in your Discord activity.
                         </div>
                     </div>
 
@@ -85,13 +93,28 @@
                 <div class="drp-section">
                     <p class="drp-section-title">&#128100; User Filter <em style="font-weight:400;text-transform:none;font-size:.8em;">(Multi-User Servers)</em></p>
 
+                    <div class="fieldDescription" style="margin-bottom:.9em;">
+                        By default the plugin reports the <em>first active session</em> it finds on the server.
+                        On a shared server (e.g. with family or friends), this means that if someone else
+                        starts watching something, their playback will immediately replace your Discord activity &mdash;
+                        even while you are already watching something yourself.
+                        <br><br>
+                        Setting a filter here locks the presence to <strong>your account only</strong>.
+                        Any session belonging to a different user is completely ignored.
+                    </div>
+
                     <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="txtTargetUserId">Target Username or User ID</label>
-                        <input is="emby-input" type="text" id="txtTargetUserId" placeholder="Leave blank to use any active session" />
+                        <label class="inputLabel inputLabelUnfocused" for="txtTargetUserId">Your Jellyfin Username or User ID</label>
+                        <input is="emby-input" type="text" id="txtTargetUserId" placeholder="Leave blank to allow any active session" />
                         <div class="fieldDescription">
-                            On shared servers with friends or family, another user's playback can overwrite your Discord activity.
-                            Enter your Jellyfin username (e.g. <code>Admin</code>) or your exact User&nbsp;ID (UUID) to restrict
-                            Rich Presence to your sessions only. Leave blank to use the first active session on the server.
+                            Enter either your <strong>Jellyfin username</strong> (e.g. <code>Admin</code>) or your
+                            <strong>User ID</strong> (a UUID like <code>a1b2c3d4-e5f6-…</code>).
+                            <br>
+                            To find your User ID: open your Jellyfin dashboard &rarr;
+                            <strong>Administration &rarr; Users</strong>, click your user, and copy the ID from the page URL
+                            (<code>&hellip;/users/<strong>&lt;your-id&gt;</strong>/edit</code>).
+                            <br><br>
+                            Leave blank to report the first active session on the server (single-user setups).
                         </div>
                     </div>
                 </div>
