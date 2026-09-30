@@ -1,78 +1,36 @@
+using System;
+using System.Collections.Generic;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.DiscordRichPresence.Configuration
 {
     /// <summary>
-    /// Anime/metadata artwork provider preference.
-    /// </summary>
-    public enum AnimeProvider
-    {
-        /// <summary>Automatically detect based on item metadata (default).</summary>
-        Auto = 0,
-
-        /// <summary>Force AniList GraphQL for anime lookups.</summary>
-        AniList = 1,
-
-        /// <summary>Force TVMaze for TV-series lookups (useful when AniList gives wrong results).</summary>
-        TvMaze = 2,
-
-        /// <summary>Disable external artwork lookups entirely; always use the Jellyfin fallback icon.</summary>
-        Disabled = 3
-    }
-
-    /// <summary>
     /// Plugin configuration options serialized to XML by Jellyfin.
-    /// All properties have safe defaults so the plugin works out-of-the-box.
     /// </summary>
     public class PluginConfiguration : BasePluginConfiguration
     {
-        // ── General ──────────────────────────────────────────────────────────
-
         /// <summary>
         /// Gets or sets a value indicating whether Discord Rich Presence integration is globally enabled.
         /// </summary>
         public bool Enabled { get; set; } = true;
 
         /// <summary>
-        /// Gets or sets the Discord Application ID registered in the Discord Developer Portal.
-        /// Must be a valid numeric snowflake (17-19 digits).
+        /// Gets or sets the Discord Application ID registered in Discord Developer Portal.
         /// </summary>
-        public string DiscordApplicationId { get; set; } = string.Empty;
+        public string DiscordApplicationId { get; set; } = "123456789012345678";
 
         /// <summary>
-        /// Gets or sets the polling interval in seconds for checking active Jellyfin sessions.
-        /// Valid range: 1–60. Recommended: 5.
-        /// Note: actual Discord IPC update frequency is governed by the internal keepalive timer
-        /// (20 s), not this value. Lower values do not increase Discord update rate.
+        /// Gets or sets the polling interval in seconds for checking active sessions.
         /// </summary>
         public int PollIntervalSeconds { get; set; } = 5;
 
         /// <summary>
-        /// Gets or sets the publicly accessible URL of the Jellyfin server
-        /// (e.g. <c>https://jellyfin.example.com</c>).
-        /// Discord's CDN proxies media artwork and cannot reach localhost or private LAN addresses.
-        /// When set, public artwork URLs are sent to Discord for rich media covers.
-        /// </summary>
-        public string PublicServerUrl { get; set; } = string.Empty;
-
-        // ── User Filter ───────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Gets or sets the Jellyfin username or User ID (GUID) to restrict Rich Presence to.
-        /// If empty, the first active playback session on the server is reported.
-        /// On multi-user servers this prevents other users' sessions from overriding the host presence.
-        /// </summary>
-        public string TargetUserId { get; set; } = string.Empty;
-
-        // ── Playback Display ──────────────────────────────────────────────────
-
-        /// <summary>
-        /// Gets or sets a value indicating whether season and episode numbers are shown (e.g. S01E05).
+        /// Gets or sets a value indicating whether season and episode numbers should be displayed (e.g. S01E05).
         /// </summary>
         public bool ShowEpisodeInfo { get; set; } = true;
 
         /// <summary>
-        /// Gets or sets a value indicating whether media posters and banners are displayed.
+        /// Gets or sets a value indicating whether media posters and banners should be displayed.
         /// </summary>
         public bool ShowMediaBanner { get; set; } = true;
 
@@ -81,33 +39,55 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Configuration
         /// </summary>
         public bool ShowPlaybackPosition { get; set; } = true;
 
-        // ── Pause Behaviour ───────────────────────────────────────────────────
+        /// <summary>
+        /// Gets or sets the publicly accessible URL of the Jellyfin server (e.g. https://jellyfin.example.com).
+        /// Discord's CDN proxies media artwork and cannot reach localhost or private LAN IP addresses.
+        /// When configured, public artwork URLs are sent to Discord for rich media covers.
+        /// </summary>
+        public string PublicServerUrl { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets a value indicating whether a ⏸ Paused badge is displayed in Discord
-        /// instead of clearing the presence immediately on pause.
+        /// Gets or sets the target Jellyfin User ID or Username to filter Discord Rich Presence for.
+        /// If empty, any active playback session is reported (default).
+        /// In multi-user servers, this prevents other users' sessions from overriding the host presence.
+        /// </summary>
+        public string TargetUserId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to display a paused status (⏸️ Paused) instead of clearing presence immediately.
         /// </summary>
         public bool ShowPauseState { get; set; } = true;
 
         /// <summary>
-        /// Gets or sets how long (in minutes) the paused activity stays visible in Discord
-        /// before being cleared automatically. 0 = clear immediately.
-        /// Valid range: 0–30. Default: 3.
+        /// Gets or sets the grace period in minutes to display the paused activity before clearing it.
+        /// Default: 5 minutes.
         /// </summary>
-        public int PauseGracePeriodMinutes { get; set; } = 3;
-
-        // ── Artwork / Metadata ────────────────────────────────────────────────
+        public int PauseGracePeriodMinutes { get; set; } = 5;
 
         /// <summary>
-        /// Gets or sets the preferred metadata provider used to resolve artwork for anime and TV series.
-        /// <see cref="AnimeProvider.Auto"/> (default) selects the best provider automatically.
+        /// Gets or sets mappings between Jellyfin User IDs and Discord User IDs.
         /// </summary>
-        public AnimeProvider ArtworkProvider { get; set; } = AnimeProvider.Auto;
+        public List<UserDiscordMapping> UserMappings { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Represents a single mapping between a Jellyfin User and a Discord User.
+    /// </summary>
+    public class UserDiscordMapping
+    {
+        /// <summary>
+        /// Gets or sets the Jellyfin User ID (GUID).
+        /// </summary>
+        public string JellyfinUserId { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets a value indicating whether artwork URLs are cached in memory.
-        /// Disabling the cache forces a fresh API call on every activity update (not recommended).
+        /// Gets or sets the Jellyfin User Name for display in the admin dashboard.
         /// </summary>
-        public bool EnableArtworkCache { get; set; } = true;
+        public string JellyfinUserName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the Discord snowflake User ID.
+        /// </summary>
+        public string DiscordUserId { get; set; } = string.Empty;
     }
 }
