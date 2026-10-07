@@ -1,3 +1,37 @@
+## 🔧 v1.2.0.1 — Linux IPC Fix & Config Upgrade Fix (2026-10-07)
+
+### 🐛 Bug Fixes
+
+- **Fixed: Discord Rich Presence not working on Linux at all**
+  The plugin uses Unix Domain Sockets (UDS) to communicate with Discord on Linux/macOS. The previous code used `File.Exists()` to check if the socket file was present before connecting. However, `File.Exists()` only detects **regular files** — Unix Domain Sockets are a different filesystem type (`AF_UNIX` socket), so `File.Exists()` always returned `false`, and the plugin never attempted to connect.
+  Fixed by replacing `File.Exists()` with `Path.Exists()`, which correctly handles all filesystem entry types. Additionally added support for the Flatpak Discord socket path (`$XDG_RUNTIME_DIR/app/com.discordapp.Discord/discord-ipc-{n}`), which is the standard location on modern Linux distributions with Flatpak Discord.
+
+- **Fixed: All plugin settings reset to defaults when upgrading from v1.1.0.0 → v1.2.0.0**
+  The v1.2.0.0 release added a `UserMappings` property (type `List<UserDiscordMapping>`) to the plugin configuration. Jellyfin's XML serializer failed to deserialize this complex list type when reading the old v1.1.0.0 config file (which didn't have this property), causing the entire configuration to reset — wiping the Discord Application ID, user filter, and all other settings.
+  Fixed by removing the unused `UserMappings` field. The Discord App ID and all other settings are now preserved correctly during upgrades.
+
+### 📦 Installation & Verification
+
+#### Option A: Automatic via Plugin Repository (Recommended)
+Add this repository manifest to your Jellyfin server:
+```text
+https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/manifest.json
+```
+Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update with one click.
+
+#### Option B: Manual Installation
+1. Download `jellyfin-discord-rich-presence.zip` below.
+2. Extract the archive into your Jellyfin `plugins/DiscordRichPresence/` directory.
+3. Restart Jellyfin Server.
+
+### 🔐 Integrity Checksums
+| Algorithm | Checksum |
+|---|---|
+| **MD5** *(Jellyfin Package Manager)* | `8E48689DC0C5F25377E901A56B187487` |
+| **SHA256** | `0196e247c0cc282a00eea921b98402849cd5f9e93072ba90ea87cf7d046b9660` |
+
+---
+
 ## ⚡ v1.2.0.0 — IPC Fix, User Filter & Pause State (2026-09-27)
 
 ### 🐛 Bug Fixes
