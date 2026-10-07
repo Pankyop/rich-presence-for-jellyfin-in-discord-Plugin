@@ -10,10 +10,10 @@
     "versions": [
       {
         "version": "1.2.0.1",
-        "changelog": "- **Fixed: Linux Discord IPC connection** — Discord sockets are Unix Domain Sockets (not regular files); `File.Exists()` always returned false on Linux, preventing any connection. Now correctly uses `Path.Exists()` which detects socket-type filesystem entries. Added Flatpak Discord socket path support.\n- **Fixed: Plugin configuration reset on upgrade** — The `UserMappings` complex XML type caused Jellyfin's XmlSerializer to fail when upgrading from v1.1.0.0, resetting all settings (including the Discord App ID). Removed unused field.\n---",
+        "changelog": "- **Fixed: Discord Rich Presence not working on Linux at all**\n- **Fixed: All plugin settings reset to defaults when upgrading from v1.1.0.0 → v1.2.0.0**\n---",
         "targetAbi": "10.9.0.0",
         "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.2.0.1/jellyfin-discord-rich-presence.zip",
-        "checksum": "8E48689DC0C5F25377E901A56B187487",
+        "checksum": "950F1362EB706A13D8A24AFA9EE61D26",
         "timestamp": "2026-10-07T00:00:00Z"
       },
       {
