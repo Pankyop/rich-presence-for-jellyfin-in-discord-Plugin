@@ -27,8 +27,8 @@ Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update wit
 ### 🔐 Integrity Checksums
 | Algorithm | Checksum |
 |---|---|
-| **MD5** *(Jellyfin Package Manager)* | `8E48689DC0C5F25377E901A56B187487` |
-| **SHA256** | `0196e247c0cc282a00eea921b98402849cd5f9e93072ba90ea87cf7d046b9660` |
+| **MD5** *(Jellyfin Package Manager)* | `950F1362EB706A13D8A24AFA9EE61D26` |
+| **SHA256** | `3e0be0785246cc9b3d31c0ada4582a8a32ff03889dd044735f0a3981673470f5` |
 
 ---
 
