@@ -245,14 +245,21 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             }
             else
             {
+                // Build candidate directories. On Linux, Discord (native, Flatpak, Snap) places its
+                // IPC socket in XDG_RUNTIME_DIR or /tmp.
+                var xdgRuntime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+
                 var candidates = new[]
                 {
-                    Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR"),
+                    xdgRuntime,
+                    // Flatpak Discord on modern Linux distros uses a nested app directory
+                    string.IsNullOrWhiteSpace(xdgRuntime) ? null : Path.Combine(xdgRuntime, "app", "com.discordapp.Discord"),
                     Environment.GetEnvironmentVariable("TMPDIR"),
                     Environment.GetEnvironmentVariable("TMP"),
                     Environment.GetEnvironmentVariable("TEMP"),
                     "/tmp"
                 };
+
 
                 foreach (var dir in candidates)
                 {
@@ -264,7 +271,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     for (var i = 0; i < 10; i++)
                     {
                         var socketPath = Path.Combine(dir, $"discord-ipc-{i}");
-                        if (!File.Exists(socketPath))
+
+                        // IMPORTANT: Use Path.Exists() instead of File.Exists().
+                        // Unix Domain Sockets are socket-type filesystem entries, NOT regular files.
+                        // File.Exists() returns false for socket files on Linux/macOS, which caused
+                        // this code to never attempt a connection even when Discord was running.
+                        if (!Path.Exists(socketPath))
                         {
                             continue;
                         }
