@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.DiscordRichPresence.Configuration
@@ -63,31 +62,6 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Configuration
         /// Default: 5 minutes.
         /// </summary>
         public int PauseGracePeriodMinutes { get; set; } = 5;
-
-        /// <summary>
-        /// Gets or sets mappings between Jellyfin User IDs and Discord User IDs.
-        /// </summary>
-        public List<UserDiscordMapping> UserMappings { get; set; } = new();
-    }
-
-    /// <summary>
-    /// Represents a single mapping between a Jellyfin User and a Discord User.
-    /// </summary>
-    public class UserDiscordMapping
-    {
-        /// <summary>
-        /// Gets or sets the Jellyfin User ID (GUID).
-        /// </summary>
-        public string JellyfinUserId { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Gets or sets the Jellyfin User Name for display in the admin dashboard.
-        /// </summary>
-        public string JellyfinUserName { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Gets or sets the Discord snowflake User ID.
-        /// </summary>
-        public string DiscordUserId { get; set; } = string.Empty;
     }
 }
+
