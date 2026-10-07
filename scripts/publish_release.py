@@ -58,7 +58,7 @@ def _extract_release_section(notes_file: Path, tag: str) -> str:
     start = None
     for i, line in enumerate(lines):
         # Match any ## heading that contains the exact version string
-        if line.startswith('##') and version in line:
+        if line.startswith('## ') and version in line:
             start = i
             break
 
@@ -72,7 +72,7 @@ def _extract_release_section(notes_file: Path, tag: str) -> str:
         if line.strip() == '---':
             break
         # Stop if we hit another version heading (but not the one we started on)
-        if line.startswith('##') and version not in line and section:
+        if line.startswith('## ') and version not in line and section:
             break
         section.append(line)
 
