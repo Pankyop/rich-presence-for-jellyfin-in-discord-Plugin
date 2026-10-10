@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace Jellyfin.Plugin.DiscordRichPresence.Discord.Models
@@ -48,6 +49,32 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord.Models
         /// </summary>
         [JsonPropertyName("instance")]
         public bool Instance { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets interactive action buttons (max 2).
+        /// </summary>
+        [JsonPropertyName("buttons")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<DiscordButton>? Buttons { get; set; }
+    }
+
+    /// <summary>
+    /// Interactive button shown on Discord user profile.
+    /// Discord limits: max 2 buttons, label <= 32 chars, url <= 512 chars.
+    /// </summary>
+    public class DiscordButton
+    {
+        /// <summary>
+        /// Gets or sets the label text displayed on the button (max 32 characters).
+        /// </summary>
+        [JsonPropertyName("label")]
+        public string Label { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the target URL opened when clicking the button.
+        /// </summary>
+        [JsonPropertyName("url")]
+        public string Url { get; set; } = string.Empty;
     }
 
     /// <summary>
