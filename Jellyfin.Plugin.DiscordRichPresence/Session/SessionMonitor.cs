@@ -126,6 +126,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         {
             try
             {
+                _discordClient.ResetConnectCooldown();
                 await HandlePlaybackEventAsync(e, isProgressEvent: false).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -156,12 +157,26 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                     return;
                 }
 
+                if (!IsSessionAllowed(e.Session, config))
+                {
+                    return;
+                }
+
                 // Check if any other session (matching user filter) is still playing
                 var activeSession = FindActiveSession(config);
                 if (activeSession == null)
                 {
                     ResetThrottleState();
                     await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await UpdatePresenceAsync(
+                        activeSession.NowPlayingItem,
+                        activeSession.PlayState.PositionTicks,
+                        false,
+                        config,
+                        _cts.Token).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -263,10 +278,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 
             if (playingSession == null)
             {
-                // Check for a paused session (user filter applied)
+                // Check for a paused session (user filter applied, ordered by most recent activity)
                 var pausedSession = _sessionManager.Sessions
                     .Where(s => IsSessionAllowed(s, config))
-                    .FirstOrDefault(s => s.NowPlayingItem != null && s.PlayState.IsPaused);
+                    .Where(s => s.NowPlayingItem != null && s.PlayState.IsPaused)
+                    .OrderByDescending(s => s.LastActivityDate)
+                    .FirstOrDefault();
 
                 if (pausedSession != null && config.ShowPauseState)
                 {
@@ -398,13 +415,16 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         }
 
         /// <summary>
-        /// Finds the first active (non-paused) playing session, applying TargetUserId filter if configured.
+        /// Finds the active (non-paused) playing session, applying TargetUserId filter if configured,
+        /// prioritizing the most recently active session to prevent flickering on multi-session setups.
         /// </summary>
         private SessionInfo? FindActiveSession(PluginConfiguration config)
         {
             return _sessionManager.Sessions
                 .Where(s => IsSessionAllowed(s, config))
-                .FirstOrDefault(s => s.NowPlayingItem != null && !s.PlayState.IsPaused);
+                .Where(s => s.NowPlayingItem != null && !s.PlayState.IsPaused)
+                .OrderByDescending(s => s.LastActivityDate)
+                .FirstOrDefault();
         }
 
         /// <summary>
@@ -440,6 +460,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 
         private string GetServerBaseUrl()
         {
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+            if (!string.IsNullOrWhiteSpace(config.PublicServerUrl))
+            {
+                return config.PublicServerUrl.Trim().TrimEnd('/');
+            }
+
             return "http://localhost:8096";
         }
 
