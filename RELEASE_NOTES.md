@@ -1,3 +1,43 @@
+## 🚀 v1.3.0.0 — Interactive Buttons, Music Artwork & Stability (2026-10-10)
+
+### 🌟 What's New
+
+- **Interactive Discord Action Buttons**:
+  The plugin now attaches interactive action buttons to your Discord Rich Presence profile. When `PublicServerUrl` is configured, friends on Discord can click **"Watch on Jellyfin"** to open the item directly in Jellyfin Web. For verified metadata, dedicated buttons for **IMDb**, **TMDb**, **AniList**, and **MusicBrainz** provide one-click access to show, movie, anime, or album details.
+- **Dedicated Music & Album Artwork Resolution**:
+  Added automatic high-resolution album cover art resolution for music playback via **Cover Art Archive (MusicBrainz)** and the **Deezer API**, ensuring songs and albums display real album artwork instead of generic fallback badges.
+
+### 🐛 Bug Fixes & Stability
+
+- **IPC Connection Cooldown & Backoff**:
+  Added an exponential retry backoff in `DiscordIpcClient`. When Discord is closed or unreachable, the plugin avoids blocking execution on named pipe timeouts, eliminating lag spikes and CPU overhead during polling cycles.
+- **Multi-Session Ordering & Seamless Transition**:
+  Active and paused sessions are now prioritized by most recent activity timestamp (`LastActivityDate`). This prevents rapid presence flickering when multiple sessions or background browser tabs exist on shared servers, and smoothly transitions playback when one session stops while another is active.
+- **UI Settings Harmonization**:
+  Harmonized the default pause grace period (5 minutes) across the web dashboard administration interface and the backend configuration.
+
+### 📦 Installation & Verification
+
+#### Option A: Automatic via Plugin Repository (Recommended)
+Add this repository manifest to your Jellyfin server:
+```text
+https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/manifest.json
+```
+Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update with one click.
+
+#### Option B: Manual Installation
+1. Download `jellyfin-discord-rich-presence.zip` below.
+2. Extract the archive into your Jellyfin `plugins/DiscordRichPresence/` directory.
+3. Restart Jellyfin Server.
+
+### 🔐 Integrity Checksums
+| Algorithm | Checksum |
+|---|---|
+| **MD5** *(Jellyfin Package Manager)* | `05262866CB62CB3C5A62A25495328C99` |
+| **SHA256** | `a52e9cb014b88d94f7adb80a469a50e4754d89282f96163c71773bab2c997cb9` |
+
+---
+
 ## 🔧 v1.2.0.1 — Linux IPC Fix & Config Upgrade Fix (2026-10-07)
 
 ### 🐛 Bug Fixes
