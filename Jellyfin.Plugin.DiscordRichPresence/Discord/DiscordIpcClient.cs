@@ -24,6 +24,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         private string? _currentClientId;
         private bool _isConnected;
         private bool _isDisposed;
+        private DateTimeOffset _nextConnectAttemptUtc = DateTimeOffset.MinValue;
+        private int _failedConnectAttempts;
 
         public DiscordIpcClient(ILogger<DiscordIpcClient> logger)
         {
@@ -33,11 +35,25 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         public bool IsConnected => _isConnected && _stream != null;
 
         /// <summary>
+        /// Resets the connection retry backoff so that subsequent calls to ConnectAsync will try immediately.
+        /// </summary>
+        public void ResetConnectCooldown()
+        {
+            _nextConnectAttemptUtc = DateTimeOffset.MinValue;
+            _failedConnectAttempts = 0;
+        }
+
+        /// <summary>
         /// Connects to Discord's local IPC pipe or socket.
         /// </summary>
         public async Task<bool> ConnectAsync(string clientId, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(clientId))
+            {
+                return false;
+            }
+
+            if (DateTimeOffset.UtcNow < _nextConnectAttemptUtc)
             {
                 return false;
             }
@@ -57,6 +73,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
                 if (_stream == null)
                 {
+                    _failedConnectAttempts++;
+                    _nextConnectAttemptUtc = DateTimeOffset.UtcNow.AddSeconds(Math.Min(60, 5 * _failedConnectAttempts));
                     _logger.LogDebug("Discord IPC stream not available (Discord may not be running locally).");
                     _isConnected = false;
                     return false;
@@ -72,15 +90,21 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 {
                     _currentClientId = clientId;
                     _isConnected = true;
+                    _failedConnectAttempts = 0;
+                    _nextConnectAttemptUtc = DateTimeOffset.MinValue;
                     _logger.LogInformation("Successfully connected to Discord Rich Presence IPC.");
                     return true;
                 }
 
+                _failedConnectAttempts++;
+                _nextConnectAttemptUtc = DateTimeOffset.UtcNow.AddSeconds(Math.Min(60, 5 * _failedConnectAttempts));
                 CloseStream();
                 return false;
             }
             catch (Exception ex)
             {
+                _failedConnectAttempts++;
+                _nextConnectAttemptUtc = DateTimeOffset.UtcNow.AddSeconds(Math.Min(60, 5 * _failedConnectAttempts));
                 _logger.LogDebug("Failed to establish Discord IPC connection: {Message}", ex.Message);
                 CloseStream();
                 return false;
