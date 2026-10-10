@@ -206,7 +206,7 @@
                 document.querySelector('#chkShowMediaBanner').checked = config.ShowMediaBanner !== false;
                 document.querySelector('#chkShowPlaybackPosition').checked = config.ShowPlaybackPosition !== false;
                 document.querySelector('#chkShowPauseState').checked = config.ShowPauseState === true;
-                document.querySelector('#txtPauseGracePeriod').value = config.PauseGracePeriodMinutes != null ? config.PauseGracePeriodMinutes : 3;
+                document.querySelector('#txtPauseGracePeriod').value = config.PauseGracePeriodMinutes != null ? config.PauseGracePeriodMinutes : 5;
                 Dashboard.hideLoadingMsg();
             });
         });
@@ -225,7 +225,7 @@
                 config.ShowMediaBanner = document.querySelector('#chkShowMediaBanner').checked;
                 config.ShowPlaybackPosition = document.querySelector('#chkShowPlaybackPosition').checked;
                 config.ShowPauseState = document.querySelector('#chkShowPauseState').checked;
-                config.PauseGracePeriodMinutes = parseInt(document.querySelector('#txtPauseGracePeriod').value, 10) || 3;
+                config.PauseGracePeriodMinutes = parseInt(document.querySelector('#txtPauseGracePeriod').value, 10) || 5;
 
                 ApiClient.updatePluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId, config).then(function (result) {
                     Dashboard.processPluginConfigurationUpdateResult(result);
