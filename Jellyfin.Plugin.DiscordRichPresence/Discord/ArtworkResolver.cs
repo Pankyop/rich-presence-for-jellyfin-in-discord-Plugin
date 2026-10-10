@@ -102,6 +102,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 CleanExpiredCache(now);
             }
 
+            var isAudio = item.Type == BaseItemKind.Audio;
             var isAnime = IsAnime(item);
             var isMovie = item.Type == BaseItemKind.Movie || item.Type == BaseItemKind.Video || item.Type == BaseItemKind.Trailer;
             var isTv = item.Type == BaseItemKind.Episode || item.Type == BaseItemKind.Series || item.Type == BaseItemKind.Season;
@@ -113,6 +114,18 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             try
             {
+                // 3.5 If Audio, query dedicated music providers (Cover Art Archive / Deezer)
+                if (isAudio)
+                {
+                    using var audioCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    audioCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    var musicPoster = await QueryMusicCoverArtAsync(item, searchTitle, audioCts.Token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(musicPoster))
+                    {
+                        _cache[searchTitle] = new CacheEntry(musicPoster, now.AddHours(24));
+                        return musicPoster;
+                    }
+                }
                 // 4. Exact IMDb ID match if available (highest accuracy for movies and TV)
                 if (!string.IsNullOrWhiteSpace(imdbId))
                 {
@@ -245,6 +258,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             {
                 raw = !string.IsNullOrWhiteSpace(item.SeriesName) ? item.SeriesName.Trim() : item.Name?.Trim() ?? string.Empty;
             }
+            else if (item.Type == BaseItemKind.Audio)
+            {
+                var artist = item.Artists != null && item.Artists.Count > 0 ? item.Artists[0] : null;
+                var track = item.Name?.Trim() ?? string.Empty;
+                raw = !string.IsNullOrWhiteSpace(artist) ? $"{artist} - {track}" : track;
+            }
             else
             {
                 raw = item.Name?.Trim() ?? string.Empty;
@@ -252,6 +271,72 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
             var cleaned = System.Text.RegularExpressions.Regex.Replace(raw, @"\s*\(\d{4}\)$", "").Trim();
             return string.IsNullOrWhiteSpace(cleaned) ? raw : cleaned;
+        }
+
+        private static async Task<string?> QueryMusicCoverArtAsync(BaseItemDto item, string searchTitle, CancellationToken ct)
+        {
+            try
+            {
+                // 1. Cover Art Archive via MusicBrainz Release or Release Group ID
+                if (item.ProviderIds != null)
+                {
+                    if (item.ProviderIds.TryGetValue("MusicBrainzAlbum", out var releaseId) && !string.IsNullOrWhiteSpace(releaseId))
+                    {
+                        var mbidUrl = $"https://coverartarchive.org/release/{Uri.EscapeDataString(releaseId.Trim())}/front-250.jpg";
+                        using var req = new HttpRequestMessage(HttpMethod.Head, mbidUrl);
+                        using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            return mbidUrl;
+                        }
+                    }
+
+                    if (item.ProviderIds.TryGetValue("MusicBrainzReleaseGroup", out var rgId) && !string.IsNullOrWhiteSpace(rgId))
+                    {
+                        var mbidUrl = $"https://coverartarchive.org/release-group/{Uri.EscapeDataString(rgId.Trim())}/front-250.jpg";
+                        using var req = new HttpRequestMessage(HttpMethod.Head, mbidUrl);
+                        using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            return mbidUrl;
+                        }
+                    }
+                }
+
+                // 2. Deezer public search API (no auth key required)
+                var artist = item.Artists != null && item.Artists.Count > 0 ? item.Artists[0] : null;
+                var track = item.Name?.Trim() ?? searchTitle;
+                var query = !string.IsNullOrWhiteSpace(artist) ? $"{artist} {track}" : track;
+                var deezerUrl = $"https://api.deezer.com/search?q={Uri.EscapeDataString(query)}&limit=1";
+
+                using var deezerResp = await _httpClient.GetAsync(deezerUrl, ct).ConfigureAwait(false);
+                if (deezerResp.IsSuccessStatusCode)
+                {
+                    var body = await deezerResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    using var doc = JsonDocument.Parse(body);
+                    if (doc.RootElement.TryGetProperty("data", out var dataArr) &&
+                        dataArr.ValueKind == JsonValueKind.Array &&
+                        dataArr.GetArrayLength() > 0)
+                    {
+                        var first = dataArr[0];
+                        if (first.TryGetProperty("album", out var albumObj) &&
+                            albumObj.TryGetProperty("cover_medium", out var coverProp))
+                        {
+                            var cover = coverProp.GetString();
+                            if (!string.IsNullOrWhiteSpace(cover))
+                            {
+                                return cover;
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Non-critical fallback
+            }
+
+            return null;
         }
 
         private static async Task<string?> QueryImdbAsync(string? imdbId, string title, int? year, CancellationToken ct)
