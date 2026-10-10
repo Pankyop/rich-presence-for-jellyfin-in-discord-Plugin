@@ -10,10 +10,10 @@
     "versions": [
       {
         "version": "1.3.0.0",
-        "changelog": "- **Interactive Discord Action Buttons (Watch on Jellyfin, IMDb, TMDb, AniList, MusicBrainz)**\n- **Dedicated Music & Album Artwork Resolution via Cover Art Archive and Deezer**\n- **IPC Connection Cooldown & Retry Backoff to eliminate timeouts when Discord is closed**\n- **Session ordering by LastActivityDate to prevent flickering in multi-session setups**\n- **Harmonized default pause grace period (5 minutes)**\n---",
+        "changelog": "- **Interactive Discord Action Buttons**:\n- **Dedicated Music & Album Artwork Resolution**:\n- **IPC Connection Cooldown & Backoff**:\n- **Discord Rejection & Opcode Validation**:\n- **Multi-Session Ordering & Seamless Transition**:\n- **UI Settings Harmonization**:\n---",
         "targetAbi": "10.9.0.0",
         "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.3.0.0/jellyfin-discord-rich-presence.zip",
-        "checksum": "EB5B51F73104D4D9A24E6537927319E0",
+        "checksum": "3F796BA6D4259E5368839917B9491410",
         "timestamp": "2026-10-10T00:00:00Z"
       },
       {
