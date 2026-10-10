@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -117,6 +118,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 };
             }
 
+            activity.Buttons = BuildButtons(movie, config);
             return activity;
         }
 
@@ -176,6 +178,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 };
             }
 
+            activity.Buttons = BuildButtons(episode, config);
             return activity;
         }
 
@@ -220,6 +223,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 };
             }
 
+            activity.Buttons = BuildButtons(audio, config);
             return activity;
         }
 
@@ -261,6 +265,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 };
             }
 
+            activity.Buttons = BuildButtons(item, config);
             return activity;
         }
 
@@ -322,6 +327,64 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             }
 
             return text.Length <= maxLength ? text : text.Substring(0, maxLength);
+        }
+
+        private static List<DiscordButton>? BuildButtons(BaseItemDto item, PluginConfiguration config)
+        {
+            var buttons = new List<DiscordButton>();
+
+            // 1. Direct Web playback button if public server URL is set and valid
+            var publicBase = config.PublicServerUrl?.Trim().TrimEnd('/');
+            if (!string.IsNullOrWhiteSpace(publicBase) && ArtworkResolver.IsPublicUrl(publicBase))
+            {
+                buttons.Add(new DiscordButton
+                {
+                    Label = "Watch on Jellyfin",
+                    Url = $"{publicBase}/web/index.html#!/details?id={item.Id}"
+                });
+            }
+
+            // 2. Metadata provider button (IMDb, TMDb, AniList, or MusicBrainz)
+            if (buttons.Count < 2 && item.ProviderIds != null)
+            {
+                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) &&
+                    !string.IsNullOrWhiteSpace(imdbId) &&
+                    imdbId.StartsWith("tt", StringComparison.OrdinalIgnoreCase))
+                {
+                    buttons.Add(new DiscordButton
+                    {
+                        Label = "IMDb",
+                        Url = $"https://www.imdb.com/title/{Uri.EscapeDataString(imdbId)}"
+                    });
+                }
+                else if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbId) && !string.IsNullOrWhiteSpace(tmdbId))
+                {
+                    var isTv = item.Type == BaseItemKind.Episode || item.Type == BaseItemKind.Series || item.Type == BaseItemKind.Season;
+                    buttons.Add(new DiscordButton
+                    {
+                        Label = "TMDb",
+                        Url = $"https://www.themoviedb.org/{(isTv ? "tv" : "movie")}/{Uri.EscapeDataString(tmdbId)}"
+                    });
+                }
+                else if (item.ProviderIds.TryGetValue("AniList", out var aniListId) && !string.IsNullOrWhiteSpace(aniListId))
+                {
+                    buttons.Add(new DiscordButton
+                    {
+                        Label = "AniList",
+                        Url = $"https://anilist.co/anime/{Uri.EscapeDataString(aniListId)}"
+                    });
+                }
+                else if (item.ProviderIds.TryGetValue("MusicBrainzAlbum", out var mbId) && !string.IsNullOrWhiteSpace(mbId))
+                {
+                    buttons.Add(new DiscordButton
+                    {
+                        Label = "MusicBrainz",
+                        Url = $"https://musicbrainz.org/release/{Uri.EscapeDataString(mbId)}"
+                    });
+                }
+            }
+
+            return buttons.Count > 0 ? buttons : null;
         }
     }
 }
