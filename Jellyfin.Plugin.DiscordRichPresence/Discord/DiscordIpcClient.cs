@@ -86,7 +86,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
                 // Read handshake response
                 var response = await ReadPacketAsync(cancellationToken).ConfigureAwait(false);
-                if (response != null)
+                if (response.HasValue && response.Value.opcode == DiscordOpcode.Frame)
                 {
                     _currentClientId = clientId;
                     _isConnected = true;
@@ -94,6 +94,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     _nextConnectAttemptUtc = DateTimeOffset.MinValue;
                     _logger.LogInformation("Successfully connected to Discord Rich Presence IPC.");
                     return true;
+                }
+
+                if (response.HasValue && response.Value.opcode == DiscordOpcode.Close)
+                {
+                    _logger.LogWarning("Discord rejected IPC connection (Close frame received): {Payload}", response.Value.payload);
                 }
 
                 _failedConnectAttempts++;
@@ -140,9 +145,9 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 // We MUST drain it, otherwise the pipe receive buffer fills up after
                 // several poll cycles and the connection silently breaks.
                 var response = await ReadPacketAsync(cancellationToken).ConfigureAwait(false);
-                if (response == null)
+                if (!response.HasValue || response.Value.opcode == DiscordOpcode.Close)
                 {
-                    _logger.LogWarning("Discord IPC connection closed or failed while waiting for activity response.");
+                    _logger.LogWarning("Discord IPC connection closed or failed while waiting for activity response: {Message}", response?.payload ?? "connection lost");
                     CloseStream();
                     return false;
                 }
@@ -188,7 +193,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        private async Task<string?> ReadPacketAsync(CancellationToken cancellationToken)
+        private async Task<(DiscordOpcode opcode, string payload)?> ReadPacketAsync(CancellationToken cancellationToken)
         {
             if (_stream == null)
             {
@@ -202,6 +207,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 return null;
             }
 
+            var opcode = (DiscordOpcode)BinaryPrimitivesReadInt32LittleEndian(header, 0);
             var length = BinaryPrimitivesReadInt32LittleEndian(header, 4);
             if (length <= 0 || length > 65536)
             {
@@ -215,7 +221,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 return null;
             }
 
-            return Encoding.UTF8.GetString(buffer, 0, length);
+            return (opcode, Encoding.UTF8.GetString(buffer, 0, length));
         }
 
         private static async Task<int> ReadExactAsync(Stream stream, byte[] buffer, int offset, int count, CancellationToken ct)
