@@ -11,6 +11,8 @@
 
 - **IPC Connection Cooldown & Backoff**:
   Added an exponential retry backoff in `DiscordIpcClient`. When Discord is closed or unreachable, the plugin avoids blocking execution on named pipe timeouts, eliminating lag spikes and CPU overhead during polling cycles.
+- **Discord Rejection & Opcode Validation**:
+  `DiscordIpcClient` now inspects packet header opcodes to properly detect Discord Close frames (opcode 2), capturing rejection error codes (such as invalid Application IDs) instead of treating failed handshakes as connected.
 - **Multi-Session Ordering & Seamless Transition**:
   Active and paused sessions are now prioritized by most recent activity timestamp (`LastActivityDate`). This prevents rapid presence flickering when multiple sessions or background browser tabs exist on shared servers, and smoothly transitions playback when one session stops while another is active.
 - **UI Settings Harmonization**:
@@ -33,8 +35,8 @@ Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update wit
 ### 🔐 Integrity Checksums
 | Algorithm | Checksum |
 |---|---|
-| **MD5** *(Jellyfin Package Manager)* | `05262866CB62CB3C5A62A25495328C99` |
-| **SHA256** | `a52e9cb014b88d94f7adb80a469a50e4754d89282f96163c71773bab2c997cb9` |
+| **MD5** *(Jellyfin Package Manager)* | `EB5B51F73104D4D9A24E6537927319E0` |
+| **SHA256** | `5fee6b4406133ae3a9967a2c1ef0456da267f12b5e7f4bc1fb05aaac06f81c8d` |
 
 ---
 
