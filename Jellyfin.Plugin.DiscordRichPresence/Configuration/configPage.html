@@ -54,7 +54,7 @@
 
                     <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="txtAppId">Discord Application ID</label>
-                        <input is="emby-input" type="text" id="txtAppId" required placeholder="e.g. 1234567890123456789" />
+                        <input is="emby-input" type="text" id="txtAppId" required inputmode="numeric" pattern="[0-9]{17,20}" placeholder="e.g. 1234567890123456789" />
                         <div class="fieldDescription">
                             A numeric ID that tells Discord which application to show in your profile (name, icon, artwork).
                             <br><br>
@@ -82,9 +82,10 @@
                         <label class="inputLabel inputLabelUnfocused" for="txtPublicServerUrl">Public Server URL <em>(Optional)</em></label>
                         <input is="emby-input" type="text" id="txtPublicServerUrl" placeholder="https://jellyfin.yourdomain.com" />
                         <div class="fieldDescription">
-                            Publicly reachable HTTPS/HTTP address of this Jellyfin server.
-                            Required for Discord to display media artwork from your library.
-                            If omitted, a Jellyfin fallback icon is shown instead.
+                            Publicly reachable <strong>HTTPS</strong> address of this Jellyfin server (e.g. <code>https://jellyfin.example.com</code>).
+                            Required for Discord to display media artwork directly from your library.
+                            Plain HTTP, localhost, private/LAN addresses, and URLs containing credentials are rejected.
+                            If omitted, the fallback Jellyfin icon is shown instead.
                         </div>
                     </div>
                 </div>
@@ -140,6 +141,22 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
                             Displays the show poster or movie artwork as the large Discord activity image.
+                            Without a public server URL, artwork can only come from the external providers below.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="chkEnableExternalMetadataLookups" />
+                            <span>Allow external metadata lookups for artwork</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            <strong>Off by default.</strong> When enabled, media titles, artist names, release years,
+                            and provider IDs (IMDb, MusicBrainz, AniList) are sent to
+                            <strong>IMDb</strong>, <strong>AniList</strong>, <strong>TVMaze</strong>,
+                            <strong>Wikipedia</strong>, <strong>Deezer</strong>, and <strong>Cover Art Archive</strong>
+                            to find poster/album art. Enable this only if you accept that data flow.
+                            When disabled, no external metadata requests are made.
                         </div>
                     </div>
 
@@ -194,6 +211,34 @@
             pluginUniqueId: "f8b24fad-f0a5-4f01-a9eb-0c3f27c6f78c"
         };
 
+        function setExternalLookupEnabledState() {
+            var banner = document.querySelector('#chkShowMediaBanner');
+            var external = document.querySelector('#chkEnableExternalMetadataLookups');
+            external.disabled = !banner.checked;
+        }
+
+        function isValidPublicServerUrl(value) {
+            if (!value) {
+                return true;
+            }
+            try {
+                var parsed = new URL(value);
+                return parsed.protocol === 'https:' && !parsed.username && !parsed.password;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function showValidationError(message) {
+            if (window.Dashboard && typeof Dashboard.alert === 'function') {
+                Dashboard.alert(message);
+            } else {
+                window.alert(message);
+            }
+        }
+
+        document.querySelector('#chkShowMediaBanner').addEventListener('change', setExternalLookupEnabledState);
+
         document.querySelector('#DiscordRichPresenceConfigPage').addEventListener('pageshow', function () {
             Dashboard.showLoadingMsg();
             ApiClient.getPluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId).then(function (config) {
@@ -204,28 +249,56 @@
                 document.querySelector('#txtTargetUserId').value = config.TargetUserId || "";
                 document.querySelector('#chkShowEpisodeInfo').checked = config.ShowEpisodeInfo !== false;
                 document.querySelector('#chkShowMediaBanner').checked = config.ShowMediaBanner !== false;
+                document.querySelector('#chkEnableExternalMetadataLookups').checked = config.EnableExternalMetadataLookups === true;
                 document.querySelector('#chkShowPlaybackPosition').checked = config.ShowPlaybackPosition !== false;
-                document.querySelector('#chkShowPauseState').checked = config.ShowPauseState === true;
+                document.querySelector('#chkShowPauseState').checked = config.ShowPauseState !== false;
                 document.querySelector('#txtPauseGracePeriod').value = config.PauseGracePeriodMinutes != null ? config.PauseGracePeriodMinutes : 5;
+                setExternalLookupEnabledState();
                 Dashboard.hideLoadingMsg();
             });
         });
 
         document.querySelector('#DiscordRichPresenceConfigForm').addEventListener('submit', function (e) {
             e.preventDefault();
+
+            var appId = document.querySelector('#txtAppId').value.trim();
+            if (!/^[0-9]{17,20}$/.test(appId)) {
+                showValidationError('Discord Application ID must be a 17-20 digit number.');
+                return false;
+            }
+
+            var publicServerUrl = document.querySelector('#txtPublicServerUrl').value.trim();
+            if (!isValidPublicServerUrl(publicServerUrl)) {
+                showValidationError('Public Server URL must be a valid HTTPS URL without embedded credentials.');
+                return false;
+            }
+
+            var pollInterval = parseInt(document.querySelector('#txtPollInterval').value, 10);
+            if (isNaN(pollInterval)) {
+                pollInterval = 5;
+            }
+            pollInterval = Math.min(60, Math.max(1, pollInterval));
+
+            var gracePeriod = parseInt(document.querySelector('#txtPauseGracePeriod').value, 10);
+            if (isNaN(gracePeriod)) {
+                gracePeriod = 5;
+            }
+            gracePeriod = Math.min(30, Math.max(0, gracePeriod));
+
             Dashboard.showLoadingMsg();
 
             ApiClient.getPluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId).then(function (config) {
                 config.Enabled = document.querySelector('#chkEnabled').checked;
-                config.DiscordApplicationId = document.querySelector('#txtAppId').value.trim();
-                config.PollIntervalSeconds = parseInt(document.querySelector('#txtPollInterval').value, 10) || 5;
-                config.PublicServerUrl = document.querySelector('#txtPublicServerUrl').value.trim();
+                config.DiscordApplicationId = appId;
+                config.PollIntervalSeconds = pollInterval;
+                config.PublicServerUrl = publicServerUrl;
                 config.TargetUserId = document.querySelector('#txtTargetUserId').value.trim();
                 config.ShowEpisodeInfo = document.querySelector('#chkShowEpisodeInfo').checked;
                 config.ShowMediaBanner = document.querySelector('#chkShowMediaBanner').checked;
+                config.EnableExternalMetadataLookups = document.querySelector('#chkEnableExternalMetadataLookups').checked;
                 config.ShowPlaybackPosition = document.querySelector('#chkShowPlaybackPosition').checked;
                 config.ShowPauseState = document.querySelector('#chkShowPauseState').checked;
-                config.PauseGracePeriodMinutes = parseInt(document.querySelector('#txtPauseGracePeriod').value, 10) || 5;
+                config.PauseGracePeriodMinutes = gracePeriod;
 
                 ApiClient.updatePluginConfiguration(DiscordRichPresenceConfig.pluginUniqueId, config).then(function (result) {
                     Dashboard.processPluginConfigurationUpdateResult(result);
