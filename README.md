@@ -8,7 +8,7 @@
 [![Target: .NET 8](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Jellyfin: 12.1+ / 10.9+](https://img.shields.io/badge/Jellyfin-12.1%2B%20%7C%2010.9%2B-blue.svg)](https://jellyfin.org/)
 
-Display your **Jellyfin media playback as Discord Rich Presence activity** in real time without third-party cloud services or the Discord Social SDK.
+Display your **Jellyfin media playback as Discord Rich Presence activity** in real time over local IPC, without cloud relays or the Discord Social SDK.
 
 ---
 
@@ -20,8 +20,8 @@ Display your **Jellyfin media playback as Discord Rich Presence activity** in re
 - **Event-Driven Lifecycle**: Directly hooks Jellyfin's `ISessionManager` events (`PlaybackStart`, `PlaybackProgress`, `PlaybackStopped`) with background polling fallback for minimal resource usage.
 - **🔒 Privacy First**:
   - **Zero Telemetry**: No user tracking, analytics, or external logging.
-  - **Local IPC Only**: Communicates directly through local Named Pipes (Windows: `\\.\pipe\discord-ipc-0`) or Unix Domain Sockets (Linux/macOS: `/run/user/<uid>/discord-ipc-0`).
-  - **No Cloud Dependencies**: Never connects to third-party endpoints or cloud RPC relays.
+  - **Local IPC Only for Discord**: Communicates directly through local Named Pipes (Windows: `\\.\pipe\discord-ipc-0`) or Unix Domain Sockets (Linux/macOS: `/run/user/<uid>/discord-ipc-0`). No cloud RPC relays.
+  - **External metadata lookups are opt-in and disabled by default**: when off, the plugin never sends media titles or provider IDs to third-party services. When enabled, it may query IMDb, AniList, TVMaze, Wikipedia, Deezer, and Cover Art Archive to resolve artwork (see the table in [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md)).
 - **Official Jellyfin Web Dashboard**: Settings page directly integrated inside the Jellyfin Server Administration panel.
 
 ---
@@ -36,10 +36,11 @@ Display your **Jellyfin media playback as Discord Rich Presence activity** in re
 │                               │                             │
 │                               ▼                             │
 │                       ActivityBuilder                       │
-│                               │                             │
-│                               ▼                             │
-│                       DiscordIpcClient                      │
-└───────────────────────────────┬─────────────────────────────┘
+│                         │           │                       │
+│              optional   ▼           ▼                       │
+│               ArtworkResolver  DiscordIpcClient             │
+│              (opt-in metadata)      │                       │
+└─────────────────────────────────────┼───────────────────────┘
                                 │ Local IPC (Named Pipe / Unix Socket)
                                 ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -88,11 +89,15 @@ For detailed instructions, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 2. Click **Discord Rich Presence** to access settings.
 3. Configure your preferences:
    - **Enable Discord Rich Presence**: Toggle integration on or off.
-   - **Discord Application ID**: Your custom Discord Application ID (or use default).
-   - **Poll Interval**: Session inspection rate (default: 5 seconds).
+   - **Discord Application ID**: 17–20 digit numeric Application ID from the Discord Developer Portal.
+   - **Poll Interval**: Session inspection rate (1–60 seconds, default: 5).
+   - **Public Server URL**: Optional public **HTTPS** base URL (e.g. `https://jellyfin.example.com`). Required for Discord to display your own posters and for the "Watch on Jellyfin" button. Plain HTTP, localhost/private addresses, and URLs with embedded credentials are rejected.
+   - **Target Username or User ID**: Recommended on multi-user servers so another user's playback cannot replace your presence.
    - **Display Season/Episode numbers**: Toggle `SxxExx` formatting.
    - **Display media banner/artwork**: Toggle artwork poster rendering.
+   - **Allow external metadata lookups for artwork**: Off by default. Enables artwork lookups through third-party providers.
    - **Display elapsed playback time**: Toggle duration display.
+   - **Show paused state / pause grace period**: Keep a paused badge for 0–30 minutes before clearing the presence.
 4. Click **Save Settings**.
 
 For complete configuration options, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
@@ -116,7 +121,19 @@ cd rich-presence-for-jellyfin-in-discord-Plugin
 python scripts/build.py
 ```
 
-The output zip file will be generated in `dist/jellyfin-discord-rich-presence.zip` with its SHA256 checksum printed to the console.
+The output zip file is generated in `dist/jellyfin-discord-rich-presence.zip`, together with `dist/checksums.txt` (MD5 + SHA256) and `dist/release-metadata.json`. The MD5 is what Jellyfin's package manager verifies; the SHA256 is the stronger integrity check.
+
+To verify already-published releases against `manifest.json` and `RELEASE_NOTES.md`:
+
+```bash
+python scripts/verify_release.py
+```
+
+---
+
+## 🔐 Security
+
+See [SECURITY.md](SECURITY.md) for the vulnerability-reporting process and [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) for the threat model, data flows, and residual risks.
 
 ---
 
