@@ -176,6 +176,13 @@ jobs:
             exit 1
           fi
 
+      - name: Align release notes checksums with the build
+        env:
+          TAG: ${{ needs.build.outputs.tag }}
+          MD5: ${{ needs.build.outputs.md5 }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: python scripts/sync_release_notes.py --tag "$TAG" --md5 "$MD5" --sha256 "$SHA256"
+
       - name: Publish release, verify remote asset, update manifest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -190,12 +197,14 @@ jobs:
           REPO: ${{ github.repository }}
         run: python scripts/verify_release.py --tag "$TAG" --zip dist/jellyfin-discord-rich-presence.zip --repo "$REPO"
 
-      - name: Commit verified manifest.json
+      - name: Commit verified manifest and release notes
         uses: stefanzweifel/git-auto-commit-action@d0b01107b5db882071f96de5dd4b54961ea93f4c # v7.2.1
         with:
           branch: main
-          commit_message: 'chore(release): update manifest.json for ${{ needs.build.outputs.tag }} [skip ci]'
+          commit_message: 'chore(release): record verified checksums for ${{ needs.build.outputs.tag }} [skip ci]'
           commit_user_name: github-actions[bot]
           commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
           commit_author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          file_pattern: manifest.json
+          file_pattern: |
+            manifest.json
+            RELEASE_NOTES.md
