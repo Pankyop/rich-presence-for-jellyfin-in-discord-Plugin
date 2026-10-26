@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -15,14 +17,36 @@ using MediaBrowser.Model.Entities;
 namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 {
     /// <summary>
-    /// Resolves publicly accessible poster artwork URLs for media items (Anime, TV Shows, Movies)
-    /// using external metadata providers (AniList, TVMaze, Wikipedia) when Jellyfin runs locally.
+    /// Resolves publicly accessible poster artwork URLs for media items (anime, TV shows, movies, music).
+    /// External metadata providers are contacted only when <see cref="PluginConfiguration.EnableExternalMetadataLookups"/>
+    /// is explicitly enabled. Otherwise only the configured public Jellyfin URL or bundled fallback icons are used.
     /// </summary>
     public static class ArtworkResolver
     {
         public const string DefaultJellyfinIcon = "https://raw.githubusercontent.com/jellyfin/jellyfin-ux/master/branding/web/icon-transparent.png";
         public const string DefaultPlayIcon = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/25b6.png";
         public const string DefaultPauseIcon = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/23f8.png";
+
+        private const int MaxCacheEntries = 512;
+        private const int MaxJsonResponseBytes = 512 * 1024;
+
+        private static readonly JsonDocumentOptions JsonOptions = new()
+        {
+            MaxDepth = 16
+        };
+
+        // Only these well-known artwork CDNs may be referenced in Discord presence payloads.
+        private static readonly string[] AllowedImageHostSuffixes =
+        {
+            ".media-amazon.com",
+            ".media-imdb.com",
+            ".anilist.co",
+            ".tvmaze.com",
+            ".wikimedia.org",
+            ".dzcdn.net",
+            ".coverartarchive.org",
+            ".archive.org"
+        };
 
         private sealed class CacheEntry
         {
@@ -38,23 +62,28 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
         private static readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
 
-        private static readonly HttpClient _httpClient = new HttpClient
+        private static readonly HttpClient _httpClient = new(new SocketsHttpHandler
         {
-            Timeout = TimeSpan.FromSeconds(3)
+            MaxAutomaticRedirections = 3,
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(4),
+            MaxResponseContentBufferSize = MaxJsonResponseBytes
         };
 
         static ArtworkResolver()
         {
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) JellyfinDiscordRichPresence/1.0");
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("JellyfinDiscordRichPresence/1.4 (+https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin)");
         }
 
         /// <summary>
-        /// Resolves a public artwork URL for the given item. Returns DefaultJellyfinIcon if resolution fails.
+        /// Resolves a public artwork URL for the given item. Returns <see cref="DefaultJellyfinIcon"/> if resolution fails
+        /// or if external metadata lookups are disabled.
         /// </summary>
         public static async Task<string> ResolveArtworkUrlAsync(
             BaseItemDto? item,
             PluginConfiguration config,
-            string serverAddress,
             CancellationToken ct = default)
         {
             if (item == null)
@@ -62,9 +91,9 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 return DefaultJellyfinIcon;
             }
 
-            // 1. If user configured a valid public server URL, use direct Jellyfin item/series poster
-            var publicBase = config.PublicServerUrl?.Trim().TrimEnd('/');
-            if (!string.IsNullOrWhiteSpace(publicBase) && IsPublicUrl(publicBase))
+            // 1. If the administrator configured a valid public HTTPS server URL, use the direct Jellyfin item/series poster.
+            if (TryGetPublicBaseUrl(config.PublicServerUrl, out var publicBase) &&
+                await IsPublicHostResolvedAsync(new Uri(publicBase), ct).ConfigureAwait(false))
             {
                 if (item.Type == BaseItemKind.Episode && item.SeriesId.HasValue)
                 {
@@ -82,24 +111,24 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 }
             }
 
-            // 2. Determine search title for the media item
+            // 2. No public server URL and no explicit opt-in: never contact external providers.
+            if (!config.EnableExternalMetadataLookups)
+            {
+                return DefaultJellyfinIcon;
+            }
+
+            // 3. Determine search title for the media item.
             var searchTitle = GetSearchTitle(item);
             if (string.IsNullOrWhiteSpace(searchTitle))
             {
                 return DefaultJellyfinIcon;
             }
 
-            // 3. Check in-memory cache with TTL check
+            var cacheKey = $"{item.Type}:{searchTitle}";
             var now = DateTimeOffset.UtcNow;
-            if (_cache.TryGetValue(searchTitle, out var cachedEntry) && now < cachedEntry.ExpiresAt)
+            if (_cache.TryGetValue(cacheKey, out var cachedEntry) && now < cachedEntry.ExpiresAt)
             {
                 return cachedEntry.Url;
-            }
-
-            // Housekeeping: purge expired entries if cache is growing
-            if (_cache.Count > 300)
-            {
-                CleanExpiredCache(now);
             }
 
             var isAudio = item.Type == BaseItemKind.Audio;
@@ -109,12 +138,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             string? imdbId = null;
             if (item.ProviderIds != null && item.ProviderIds.TryGetValue("Imdb", out var rawImdb) && !string.IsNullOrWhiteSpace(rawImdb))
             {
-                imdbId = rawImdb;
+                imdbId = rawImdb.Trim();
             }
 
             try
             {
-                // 3.5 If Audio, query dedicated music providers (Cover Art Archive / Deezer)
+                // 4. Audio: query dedicated music providers (Cover Art Archive / Deezer).
                 if (isAudio)
                 {
                     using var audioCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -122,11 +151,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     var musicPoster = await QueryMusicCoverArtAsync(item, searchTitle, audioCts.Token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(musicPoster))
                     {
-                        _cache[searchTitle] = new CacheEntry(musicPoster, now.AddHours(24));
+                        StoreCache(cacheKey, musicPoster, now.AddHours(24));
                         return musicPoster;
                     }
                 }
-                // 4. Exact IMDb ID match if available (highest accuracy for movies and TV)
+
+                // 5. Exact IMDb ID match if available (highest accuracy for movies and TV).
                 if (!string.IsNullOrWhiteSpace(imdbId))
                 {
                     using var imdbIdCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -134,12 +164,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     var imdbPoster = await QueryImdbAsync(imdbId, searchTitle, item.ProductionYear, imdbIdCts.Token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(imdbPoster))
                     {
-                        _cache[searchTitle] = new CacheEntry(imdbPoster, now.AddHours(24));
+                        StoreCache(cacheKey, imdbPoster, now.AddHours(24));
                         return imdbPoster;
                     }
                 }
 
-                // 5. If content is a Movie and not explicitly anime, query IMDb by title first
+                // 6. Movies that are not explicitly anime: query IMDb by title first.
                 if (isMovie && !isAnime)
                 {
                     using var imdbTitleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -147,12 +177,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     var imdbPoster = await QueryImdbAsync(null, searchTitle, item.ProductionYear, imdbTitleCts.Token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(imdbPoster))
                     {
-                        _cache[searchTitle] = new CacheEntry(imdbPoster, now.AddHours(24));
+                        StoreCache(cacheKey, imdbPoster, now.AddHours(24));
                         return imdbPoster;
                     }
                 }
 
-                // 6. If Anime (or non-movie), try AniList with title validation
+                // 7. Anime (or non-movie items): try AniList with title validation.
                 if (isAnime || !isMovie)
                 {
                     using var aniListCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -160,12 +190,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     var anilistPoster = await QueryAniListAsync(searchTitle, aniListCts.Token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(anilistPoster))
                     {
-                        _cache[searchTitle] = new CacheEntry(anilistPoster, now.AddHours(24));
+                        StoreCache(cacheKey, anilistPoster, now.AddHours(24));
                         return anilistPoster;
                     }
                 }
 
-                // 7. Try TVMaze (for TV series)
+                // 8. TV series: try TVMaze.
                 if (isTv)
                 {
                     using var tvMazeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -173,12 +203,12 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     var tvmazePoster = await QueryTvMazeAsync(searchTitle, tvMazeCts.Token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(tvmazePoster))
                     {
-                        _cache[searchTitle] = new CacheEntry(tvmazePoster, now.AddHours(24));
+                        StoreCache(cacheKey, tvmazePoster, now.AddHours(24));
                         return tvmazePoster;
                     }
                 }
 
-                // 8. Fallback: try IMDb by title if not already tried
+                // 9. Fallback: IMDb by title if not already tried.
                 if (!isMovie || isAnime)
                 {
                     using var imdbFallbackCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -186,28 +216,32 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     var imdbPoster = await QueryImdbAsync(null, searchTitle, item.ProductionYear, imdbFallbackCts.Token).ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(imdbPoster))
                     {
-                        _cache[searchTitle] = new CacheEntry(imdbPoster, now.AddHours(24));
+                        StoreCache(cacheKey, imdbPoster, now.AddHours(24));
                         return imdbPoster;
                     }
                 }
 
-                // 9. Try Wikipedia Summary API (for general media)
+                // 10. Wikipedia summary API (general media).
                 using var wikiCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 wikiCts.CancelAfter(TimeSpan.FromSeconds(2));
                 var wikiPoster = await QueryWikipediaAsync(searchTitle, wikiCts.Token).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(wikiPoster))
                 {
-                    _cache[searchTitle] = new CacheEntry(wikiPoster, now.AddHours(24));
+                    StoreCache(cacheKey, wikiPoster, now.AddHours(24));
                     return wikiPoster;
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
-                // Ignore external API failure and fall back safely
+                // Ignore external API failures and fall back safely.
             }
 
-            // Cache transient failure for 5 minutes instead of permanently
-            _cache[searchTitle] = new CacheEntry(DefaultJellyfinIcon, now.AddMinutes(5));
+            // Cache transient failure for 5 minutes instead of permanently.
+            StoreCache(cacheKey, DefaultJellyfinIcon, now.AddMinutes(5));
             return DefaultJellyfinIcon;
         }
 
@@ -238,6 +272,26 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             }
 
             return false;
+        }
+
+        private static void StoreCache(string key, string url, DateTimeOffset expiresAt)
+        {
+            if (!_cache.ContainsKey(key) && _cache.Count >= MaxCacheEntries)
+            {
+                CleanExpiredCache(DateTimeOffset.UtcNow);
+
+                if (_cache.Count >= MaxCacheEntries)
+                {
+                    // Evict the entry closest to expiry to keep memory bounded.
+                    var oldest = _cache.OrderBy(kvp => kvp.Value.ExpiresAt).FirstOrDefault();
+                    if (!string.IsNullOrEmpty(oldest.Key))
+                    {
+                        _cache.TryRemove(oldest.Key, out _);
+                    }
+                }
+            }
+
+            _cache[key] = new CacheEntry(url, expiresAt);
         }
 
         private static void CleanExpiredCache(DateTimeOffset now)
@@ -277,66 +331,76 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         {
             try
             {
-                // 1. Cover Art Archive via MusicBrainz Release or Release Group ID
+                // 1. Cover Art Archive via MusicBrainz Release or Release Group ID.
                 if (item.ProviderIds != null)
                 {
                     if (item.ProviderIds.TryGetValue("MusicBrainzAlbum", out var releaseId) && !string.IsNullOrWhiteSpace(releaseId))
                     {
                         var mbidUrl = $"https://coverartarchive.org/release/{Uri.EscapeDataString(releaseId.Trim())}/front-250.jpg";
-                        using var req = new HttpRequestMessage(HttpMethod.Head, mbidUrl);
-                        using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                        if (resp.IsSuccessStatusCode)
+                        if (await IsReachableImageAsync(mbidUrl, ct).ConfigureAwait(false))
                         {
-                            return mbidUrl;
+                            return NormalizeImageUrl(mbidUrl);
                         }
                     }
 
                     if (item.ProviderIds.TryGetValue("MusicBrainzReleaseGroup", out var rgId) && !string.IsNullOrWhiteSpace(rgId))
                     {
                         var mbidUrl = $"https://coverartarchive.org/release-group/{Uri.EscapeDataString(rgId.Trim())}/front-250.jpg";
-                        using var req = new HttpRequestMessage(HttpMethod.Head, mbidUrl);
-                        using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                        if (resp.IsSuccessStatusCode)
+                        if (await IsReachableImageAsync(mbidUrl, ct).ConfigureAwait(false))
                         {
-                            return mbidUrl;
+                            return NormalizeImageUrl(mbidUrl);
                         }
                     }
                 }
 
-                // 2. Deezer public search API (no auth key required)
+                // 2. Deezer public search API (no auth key required).
                 var artist = item.Artists != null && item.Artists.Count > 0 ? item.Artists[0] : null;
                 var track = item.Name?.Trim() ?? searchTitle;
                 var query = !string.IsNullOrWhiteSpace(artist) ? $"{artist} {track}" : track;
                 var deezerUrl = $"https://api.deezer.com/search?q={Uri.EscapeDataString(query)}&limit=1";
 
                 using var deezerResp = await _httpClient.GetAsync(deezerUrl, ct).ConfigureAwait(false);
-                if (deezerResp.IsSuccessStatusCode)
+                if (!deezerResp.IsSuccessStatusCode)
                 {
-                    var body = await deezerResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                    using var doc = JsonDocument.Parse(body);
-                    if (doc.RootElement.TryGetProperty("data", out var dataArr) &&
-                        dataArr.ValueKind == JsonValueKind.Array &&
-                        dataArr.GetArrayLength() > 0)
+                    return null;
+                }
+
+                var body = await ReadJsonBodyAsync(deezerResp, ct).ConfigureAwait(false);
+                if (body == null)
+                {
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(body, JsonOptions);
+                if (doc.RootElement.TryGetProperty("data", out var dataArr) &&
+                    dataArr.ValueKind == JsonValueKind.Array &&
+                    dataArr.GetArrayLength() > 0)
+                {
+                    var first = dataArr[0];
+                    if (first.TryGetProperty("album", out var albumObj) &&
+                        albumObj.TryGetProperty("cover_medium", out var coverProp))
                     {
-                        var first = dataArr[0];
-                        if (first.TryGetProperty("album", out var albumObj) &&
-                            albumObj.TryGetProperty("cover_medium", out var coverProp))
-                        {
-                            var cover = coverProp.GetString();
-                            if (!string.IsNullOrWhiteSpace(cover))
-                            {
-                                return cover;
-                            }
-                        }
+                        return NormalizeImageUrl(coverProp.GetString());
                     }
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
-                // Non-critical fallback
+                // Non-critical fallback.
             }
 
             return null;
+        }
+
+        private static async Task<bool> IsReachableImageAsync(string url, CancellationToken ct)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Head, url);
+            using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            return resp.IsSuccessStatusCode;
         }
 
         private static async Task<string?> QueryImdbAsync(string? imdbId, string title, int? year, CancellationToken ct)
@@ -367,8 +431,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     return null;
                 }
 
-                var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(responseBody);
+                var responseBody = await ReadJsonBodyAsync(response, ct).ConfigureAwait(false);
+                if (responseBody == null)
+                {
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(responseBody, JsonOptions);
 
                 if (doc.RootElement.TryGetProperty("d", out var d) && d.ValueKind == JsonValueKind.Array)
                 {
@@ -377,7 +446,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     {
                         if (item.TryGetProperty("i", out var i) && i.TryGetProperty("imageUrl", out var imgUrlProp))
                         {
-                            var imgUrl = imgUrlProp.GetString();
+                            var imgUrl = NormalizeImageUrl(imgUrlProp.GetString());
                             if (!string.IsNullOrWhiteSpace(imgUrl))
                             {
                                 if (firstFallback == null)
@@ -396,9 +465,13 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     return firstFallback;
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
-                // Non-critical fallback
+                // Non-critical fallback.
             }
 
             return null;
@@ -424,14 +497,19 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     return null;
                 }
 
-                var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(responseBody);
+                var responseBody = await ReadJsonBodyAsync(response, ct).ConfigureAwait(false);
+                if (responseBody == null)
+                {
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(responseBody, JsonOptions);
 
                 if (doc.RootElement.TryGetProperty("data", out var data) &&
                     data.TryGetProperty("Media", out var media) &&
                     media.ValueKind == JsonValueKind.Object)
                 {
-                    // Validate title to prevent AniList returning random fuzzy matches for non-anime
+                    // Validate title to prevent AniList returning random fuzzy matches for non-anime.
                     if (media.TryGetProperty("title", out var titleObj))
                     {
                         var romaji = titleObj.TryGetProperty("romaji", out var r) ? r.GetString() : null;
@@ -446,21 +524,33 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
 
                     if (media.TryGetProperty("coverImage", out var cover))
                     {
-                        if (cover.TryGetProperty("large", out var large) && !string.IsNullOrWhiteSpace(large.GetString()))
+                        if (cover.TryGetProperty("large", out var large))
                         {
-                            return large.GetString();
+                            var normalized = NormalizeImageUrl(large.GetString());
+                            if (normalized != null)
+                            {
+                                return normalized;
+                            }
                         }
 
-                        if (cover.TryGetProperty("extraLarge", out var extraLarge) && !string.IsNullOrWhiteSpace(extraLarge.GetString()))
+                        if (cover.TryGetProperty("extraLarge", out var extraLarge))
                         {
-                            return extraLarge.GetString();
+                            var normalized = NormalizeImageUrl(extraLarge.GetString());
+                            if (normalized != null)
+                            {
+                                return normalized;
+                            }
                         }
                     }
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
-                // Non-critical fallback
+                // Non-critical fallback.
             }
 
             return null;
@@ -488,7 +578,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 }
             }
 
-            // Word overlap check
+            // Word overlap check.
             var queryWords = query.Split(new[] { ' ', '-', ':', '_' }, StringSplitOptions.RemoveEmptyEntries);
             var meaningfulWords = queryWords.Where(w => w.Length > 3).ToList();
             if (meaningfulWords.Count == 0)
@@ -512,25 +602,38 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     return null;
                 }
 
-                var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(responseBody);
+                var responseBody = await ReadJsonBodyAsync(response, ct).ConfigureAwait(false);
+                if (responseBody == null)
+                {
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(responseBody, JsonOptions);
 
                 if (doc.RootElement.TryGetProperty("image", out var image) && image.ValueKind == JsonValueKind.Object)
                 {
-                    if (image.TryGetProperty("original", out var orig) && !string.IsNullOrWhiteSpace(orig.GetString()))
+                    if (image.TryGetProperty("original", out var orig))
                     {
-                        return orig.GetString();
+                        var normalized = NormalizeImageUrl(orig.GetString());
+                        if (normalized != null)
+                        {
+                            return normalized;
+                        }
                     }
 
-                    if (image.TryGetProperty("medium", out var med) && !string.IsNullOrWhiteSpace(med.GetString()))
+                    if (image.TryGetProperty("medium", out var med))
                     {
-                        return med.GetString();
+                        return NormalizeImageUrl(med.GetString());
                     }
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
-                // Non-critical fallback
+                // Non-critical fallback.
             }
 
             return null;
@@ -547,68 +650,311 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     return null;
                 }
 
-                var responseBody = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(responseBody);
+                var responseBody = await ReadJsonBodyAsync(response, ct).ConfigureAwait(false);
+                if (responseBody == null)
+                {
+                    return null;
+                }
+
+                using var doc = JsonDocument.Parse(responseBody, JsonOptions);
 
                 if (doc.RootElement.TryGetProperty("thumbnail", out var thumb) && thumb.ValueKind == JsonValueKind.Object)
                 {
-                    if (thumb.TryGetProperty("source", out var src) && !string.IsNullOrWhiteSpace(src.GetString()))
+                    if (thumb.TryGetProperty("source", out var src))
                     {
-                        return src.GetString();
+                        return NormalizeImageUrl(src.GetString());
                     }
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch
             {
-                // Non-critical fallback
+                // Non-critical fallback.
             }
 
             return null;
         }
 
+        private static async Task<string?> ReadJsonBodyAsync(HttpResponseMessage response, CancellationToken ct)
+        {
+            if (response.Content.Headers.ContentLength is long contentLength && contentLength > MaxJsonResponseBytes)
+            {
+                return null;
+            }
+
+            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return body.Length > MaxJsonResponseBytes ? null : body;
+        }
+
+        private static string? NormalizeImageUrl(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw) || !Uri.TryCreate(raw.Trim(), UriKind.Absolute, out var uri))
+            {
+                return null;
+            }
+
+            if (uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
+            {
+                return null;
+            }
+
+            var host = GetNormalizedHost(uri);
+            if (!IsPublicHostName(host) || !IsAllowedImageHost(host))
+            {
+                return null;
+            }
+
+            return uri.AbsoluteUri;
+        }
+
+        private static bool IsAllowedImageHost(string host)
+        {
+            foreach (var suffix in AllowedImageHostSuffixes)
+            {
+                var bareSuffix = suffix.TrimStart('.');
+                if (host.Equals(bareSuffix, StringComparison.OrdinalIgnoreCase) ||
+                    host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Returns true when <paramref name="url"/> is an HTTPS URL that points at a public host and
+        /// does not contain embedded credentials. Plain HTTP, localhost, private ranges, and userinfo are rejected.
+        /// </summary>
         public static bool IsPublicUrl(string? url)
         {
-            if (string.IsNullOrWhiteSpace(url))
+            return TryGetPublicBaseUrl(url, out _);
+        }
+
+        /// <summary>
+        /// Validates and normalizes an administrator-supplied public Jellyfin base URL.
+        /// </summary>
+        public static bool TryGetPublicBaseUrl(string? url, out string baseUrl)
+        {
+            baseUrl = string.Empty;
+            if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
             {
                 return false;
             }
 
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            if (uri.Scheme != Uri.UriSchemeHttps)
             {
                 return false;
             }
 
-            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            if (!string.IsNullOrEmpty(uri.UserInfo))
             {
                 return false;
             }
 
-            var host = uri.Host.ToLowerInvariant();
-            if (host == "localhost" || host == "127.0.0.1" || host == "::1")
+            if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
             {
                 return false;
             }
 
-            if (host.StartsWith("192.168.") || host.StartsWith("10."))
+            if (!IsPublicHost(uri))
             {
                 return false;
+            }
+
+            baseUrl = uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+            return !string.IsNullOrWhiteSpace(baseUrl);
+        }
+
+        private static async Task<bool> IsPublicHostResolvedAsync(Uri uri, CancellationToken ct)
+        {
+            if (!IsPublicHost(uri))
+            {
+                return false;
+            }
+
+            var host = GetNormalizedHost(uri);
+            if (IPAddress.TryParse(host, out _))
+            {
+                return true;
+            }
+
+            try
+            {
+                var addresses = await Dns.GetHostAddressesAsync(host, ct).ConfigureAwait(false);
+                return addresses.Length > 0 && addresses.All(IsPublicAddress);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsPublicHost(Uri uri)
+        {
+            return IsPublicHostName(GetNormalizedHost(uri));
+        }
+
+        private static string GetNormalizedHost(Uri uri)
+        {
+            var host = uri.DnsSafeHost.Trim();
+            if (host.StartsWith("[", StringComparison.Ordinal) && host.EndsWith("]", StringComparison.Ordinal))
+            {
+                host = host[1..^1];
+            }
+
+            return host.TrimEnd('.').ToLowerInvariant();
+        }
+
+        private static bool IsPublicHostName(string host)
+        {
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                return false;
+            }
+
+            if (host == "localhost" || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            foreach (var suffix in new[] { ".local", ".internal", ".home.arpa", ".lan", ".test", ".invalid", ".example", ".onion" })
+            {
+                if (host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
             }
 
             if (IPAddress.TryParse(host, out var ip))
             {
-                if (IPAddress.IsLoopback(ip))
+                return IsPublicAddress(ip);
+            }
+
+            // Public DNS names must contain at least one dot; single-label names are internal.
+            if (!host.Contains('.'))
+            {
+                return false;
+            }
+
+            var labels = host.Split('.');
+            return labels.All(label => label.Length > 0 && label.Length <= 63);
+        }
+
+        private static bool IsPublicAddress(IPAddress ip)
+        {
+            if (IPAddress.IsLoopback(ip))
+            {
+                return false;
+            }
+
+            if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+            {
+                if (ip.IsIPv4MappedToIPv6)
+                {
+                    return IsPublicAddress(ip.MapToIPv4());
+                }
+
+                if (ip.Equals(IPAddress.IPv6Any) || ip.Equals(IPAddress.IPv6None))
                 {
                     return false;
                 }
 
-                var bytes = ip.GetAddressBytes();
-                if (bytes.Length == 4)
+                var v6 = ip.GetAddressBytes();
+                if ((v6[0] & 0xFE) == 0xFC)
                 {
-                    if (bytes[0] == 10) return false;
-                    if (bytes[0] == 192 && bytes[1] == 168) return false;
-                    if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return false;
-                    if (bytes[0] == 169 && bytes[1] == 254) return false;
+                    return false; // fc00::/7 unique local
                 }
+
+                if (v6[0] == 0xFE && (v6[1] & 0xC0) == 0x80)
+                {
+                    return false; // fe80::/10 link-local
+                }
+
+                if (v6[0] == 0xFF)
+                {
+                    return false; // multicast
+                }
+
+                if (v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x0D && v6[3] == 0xB8)
+                {
+                    return false; // 2001:db8::/32 documentation
+                }
+
+                return true;
+            }
+
+            var v4 = ip.GetAddressBytes();
+            if (v4[0] == 0)
+            {
+                return false; // 0.0.0.0/8 (includes unspecified)
+            }
+
+            if (v4[0] == 10)
+            {
+                return false;
+            }
+
+            if (v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127)
+            {
+                return false; // 100.64.0.0/10 CGNAT
+            }
+
+            if (v4[0] == 127)
+            {
+                return false;
+            }
+
+            if (v4[0] == 169 && v4[1] == 254)
+            {
+                return false;
+            }
+
+            if (v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31)
+            {
+                return false;
+            }
+
+            if (v4[0] == 192 && v4[1] == 168)
+            {
+                return false;
+            }
+
+            if (v4[0] == 192 && v4[1] == 0 && (v4[2] == 0 || v4[2] == 2))
+            {
+                return false; // 192.0.0.0/24, 192.0.2.0/24
+            }
+
+            if (v4[0] == 192 && v4[1] == 88 && v4[2] == 99)
+            {
+                return false; // 192.88.99.0/24
+            }
+
+            if (v4[0] == 198 && (v4[1] == 18 || v4[1] == 19))
+            {
+                return false; // 198.18.0.0/15
+            }
+
+            if (v4[0] == 198 && v4[1] == 51 && v4[2] == 100)
+            {
+                return false; // 198.51.100.0/24
+            }
+
+            if (v4[0] == 203 && v4[1] == 0 && v4[2] == 113)
+            {
+                return false; // 203.0.113.0/24
+            }
+
+            if (v4[0] >= 224)
+            {
+                return false; // multicast, reserved, broadcast
             }
 
             return true;
