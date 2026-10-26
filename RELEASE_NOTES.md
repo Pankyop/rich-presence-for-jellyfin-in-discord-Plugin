@@ -1,3 +1,62 @@
+## 🛡️ v1.4.0.0 — Security, Privacy & Release Integrity (2026-10-26)
+
+### 🌟 Highlights
+
+- **External metadata lookups are now opt-in (default: off)**:
+  `EnableExternalMetadataLookups` defaults to `false`. In this mode the plugin makes **no outbound requests** to metadata providers: it uses your public Jellyfin URL if configured, otherwise the bundled fallback artwork. When you enable the option, media titles, artist names, release years, and provider IDs may be sent to **IMDb**, **AniList**, **TVMaze**, **Wikipedia**, **Deezer**, and **Cover Art Archive** to resolve posters and album art.
+- **Strict HTTPS validation for `Public Server URL`**:
+  The URL must be HTTPS, credential-free, and point at a public host. Plain HTTP, `localhost`, single-label hostnames, internal suffixes (`.local`, `.internal`, `.lan`, …), loopback/private/CGNAT/link-local/multicast/documentation addresses, IPv4-mapped IPv6, and ULA addresses are rejected. DNS names are resolved and rejected if any address is private.
+- **Discord IPC hardening**:
+  - Application IDs must be 17–20 digit numeric snowflakes; the placeholder/invalid values no longer cause silent hangs.
+  - Every IPC read/write has a 5-second timeout, and PING frames are answered with PONG.
+  - On Windows, the named-pipe server PID is checked and rejected if the owner is not a Discord process.
+  - On Linux/macOS, user-private runtime directories are preferred and shared `/tmp` fallback is avoided when `XDG_RUNTIME_DIR` is set.
+  - Logged IPC payloads are stripped of control characters and length-capped.
+- **Bounded artwork resolution**:
+  Provider responses are capped at 512 KB and parsed with a bounded JSON depth; the artwork cache is limited to 512 entries with 24-hour TTL. Provider-returned images must be HTTPS and match a known artwork CDN allowlist.
+- **Provider ID validation for action buttons**:
+  IMDb (`tt` + digits), TMDb (digits), AniList (digits), and MusicBrainz (UUID) identifiers are validated before being embedded in Discord buttons.
+- **Release integrity fixes**:
+  The release workflow now uploads the asset first, re-downloads and verifies its size, MD5, SHA256, and GitHub digest, and only then updates `manifest.json`. Historical checksums for v1.3.0.0, v1.2.0.0, v1.0.1.0, and v1.0.0.0 have been corrected.
+
+### ⚠️ Upgrade Notes
+
+- After upgrading, **remote artwork may disappear** until you enable **Allow external metadata lookups for artwork** (or configure a public HTTPS `Public Server URL`). This is intentional: 1.4.0.0 no longer sends media metadata to third parties by default.
+- `Public Server URL` now **requires HTTPS**. Update the setting if you previously used `http://`.
+- Enter a real 17–20 digit Discord Application ID; the default `123456789012345678` is a placeholder and will be rejected by Discord.
+- On multi-user servers, set **Target Username or User ID** so another user's playback cannot replace your presence.
+
+### 🐛 Bug Fixes & Stability
+
+- **Pause grace period `0`**: selecting `0` minutes now means "clear immediately" instead of falling back to the 5-minute default.
+- **Consistent pause defaults**: the web UI and backend now agree that a paused presence is shown by default.
+- **Event handler safety**: session events are dispatched through an exception-safe wrapper; shutdown unsubscribes handlers, cancels polling, and clears the Discord activity with a bounded timeout.
+- **Pause state race**: pause state is guarded by a dedicated lock, preventing flicker and duplicated updates.
+- **Connection ordering**: the plugin connects to Discord before running artwork lookups, so a closed Discord client produces no metadata traffic.
+- **Seek detection and throttling** remain in place to stay within Discord's IPC rate limit.
+
+### 📦 Installation & Verification
+
+#### Option A: Automatic via Plugin Repository (Recommended)
+Add this repository manifest to your Jellyfin server:
+```text
+https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/manifest.json
+```
+Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update with one click.
+
+#### Option B: Manual Installation
+1. Download `jellyfin-discord-rich-presence.zip` below.
+2. Extract the archive into your Jellyfin `plugins/DiscordRichPresence/` directory.
+3. Restart Jellyfin Server.
+
+### 🔐 Integrity Checksums
+| Algorithm | Checksum |
+|---|---|
+| **MD5** *(Jellyfin Package Manager)* | `2D190D92A05E8EF7CD1194378D28A1E6` |
+| **SHA256** | `6b68627dd1f1d99f32af82f9e4f79c4822f278d45ca891258c9b9b2b0e961c5a` |
+
+---
+
 ## 🚀 v1.3.0.0 — Interactive Buttons, Music Artwork & Stability (2026-10-10)
 
 ### 🌟 What's New
@@ -35,8 +94,8 @@ Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update wit
 ### 🔐 Integrity Checksums
 | Algorithm | Checksum |
 |---|---|
-| **MD5** *(Jellyfin Package Manager)* | `EB5B51F73104D4D9A24E6537927319E0` |
-| **SHA256** | `5fee6b4406133ae3a9967a2c1ef0456da267f12b5e7f4bc1fb05aaac06f81c8d` |
+| **MD5** *(Jellyfin Package Manager)* | `3F796BA6D4259E5368839917B9491410` |
+| **SHA256** | `ee81e34f23a057ad7faa268488c833babb2af62b2b9db7455603cbc85dbdfe63` |
 
 ---
 
@@ -118,8 +177,8 @@ Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update wit
 ### 🔐 Integrity Checksums
 | Algorithm | Checksum |
 |---|---|
-| **MD5** *(Jellyfin Package Manager)* | `564DDA380FB6D4A8B3C21F8A7F3E0B3D` |
-| **SHA256** | `c662f3db44d47286ee99ceb143e26b494b921c17c06510176ed248f959dc31bf` |
+| **MD5** *(Jellyfin Package Manager)* | `DAAA37E86142F6572B983B1EF3FCD6BC` |
+| **SHA256** | `bd4f8f5a1cdef39ebe430c2b9a761b261fa3ac965d4eaef03d330f69ef989c18` |
 
 ---
 
@@ -240,5 +299,5 @@ Navigate to **Admin Dashboard ➔ Plugins ➔ Catalog** to install or update wit
 ### 🔐 Integrity Checksums
 | Algorithm | Checksum |
 |---|---|
-| **MD5** *(Jellyfin Package Manager)* | `5434A235173EDB8E82568365AEE5782C` |
-| **SHA256** | `61771eeff1268588aef773786c2a7bf3c2a0a143ff17e0b27b1d7d8671652b79` |
+| **MD5** *(Jellyfin Package Manager)* | `FCF23ACC60BDB1FDFF54B292E48CC35F` |
+| **SHA256** | `051b1cd95dfbd343af1fcef6dbb80667d23e46c5cd55bb637ca7b80fa803a5f5` |
