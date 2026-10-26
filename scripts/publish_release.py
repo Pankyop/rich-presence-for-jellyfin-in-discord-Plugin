@@ -86,7 +86,14 @@ def api(url: str, headers: dict, method: str = "GET", payload: dict | None = Non
         return json.loads(body.decode("utf-8")) if body else None
 
 
-def download(url: str) -> bytes:
+def download(url: str, cache_key: str | None = None) -> bytes:
+    # GitHub's CDN can keep serving the previous bytes for the same asset name
+    # right after a re-upload. The query string forces a fresh fetch, so the
+    # verification checks the object just stored instead of a stale edge copy.
+    if cache_key:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}cb={urllib.parse.quote(cache_key)}"
+
     request = urllib.request.Request(url, headers={"User-Agent": "jellyfin-discord-rich-presence-release"})
     with _OPENER.open(request, timeout=DOWNLOAD_TIMEOUT) as response:
         return response.read()
@@ -238,9 +245,10 @@ def main(argv=None) -> int:
 
     print(f"    Uploaded: {uploaded['size']:,} bytes  ID={uploaded['id']}")
 
-    # Mandatory verification: download the public asset exactly as Jellyfin would.
+    # Mandatory verification: download the public asset as Jellyfin would,
+    # bypassing the CDN cache so a just-replaced asset is not mistaken for a stale copy.
     print("==> Verifying remote asset...")
-    remote_data = download(uploaded["browser_download_url"])
+    remote_data = download(uploaded["browser_download_url"], str(uploaded["id"]))
     remote_md5, remote_sha256 = hashes(remote_data)
 
     print(f"    Local  MD5/SHA256: {local_md5} / {local_sha256}")
