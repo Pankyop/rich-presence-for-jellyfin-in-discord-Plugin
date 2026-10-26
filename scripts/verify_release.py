@@ -16,6 +16,7 @@ import io
 import json
 import re
 import sys
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -31,7 +32,14 @@ def fetch_json(url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def fetch_bytes(url: str) -> bytes:
+def fetch_bytes(url: str, cache_key: str | None = None) -> bytes:
+    # GitHub's CDN can serve a stale copy for a few minutes after an asset with
+    # the same name has been replaced. The query string forces a fresh fetch so
+    # the check validates the stored object.
+    if cache_key:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}cb={urllib.parse.quote(cache_key)}"
+
     request = urllib.request.Request(url, headers={"User-Agent": "jellyfin-discord-rich-presence-verify"})
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
         return response.read()
@@ -108,7 +116,7 @@ def main(argv=None) -> int:
                 continue
 
             asset = assets[0]
-            data = fetch_bytes(asset["browser_download_url"])
+            data = fetch_bytes(asset["browser_download_url"], str(asset["id"]))
             md5, sha256 = hashes(data)
         except Exception as exc:  # noqa: BLE001 - report and continue through all versions
             print(f"[FAIL] {tag}: {exc}")
