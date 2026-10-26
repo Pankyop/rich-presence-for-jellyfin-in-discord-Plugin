@@ -25,23 +25,67 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup .NET 8 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.x'
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
-      - name: Restore NuGet dependencies
-        run: dotnet restore Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj
+      - name: Validate scripts and JSON
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/build.py scripts/update_manifest.py scripts/publish_release.py scripts/verify_release.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          json.loads(Path('manifest.json').read_text(encoding='utf-8'))
+          print('manifest.json is valid JSON')
+          PY
+
+      - name: Restore locked NuGet dependencies
+        run: dotnet restore Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj --locked-mode
+
+      - name: Check for vulnerable dependencies
+        run: |
+          set -euo pipefail
+          dotnet list Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj \
+            package --vulnerable --include-transitive --format json > /tmp/vulnerabilities.json
+          python - <<'PY'
+          import json
+          import sys
+
+          with open('/tmp/vulnerabilities.json', encoding='utf-8') as handle:
+              report = json.load(handle)
+
+          findings = []
+          for project in report.get('projects', []):
+              for framework in project.get('frameworks', []):
+                  for package in framework.get('topLevelPackages', []) + framework.get('transitivePackages', []):
+                      if package.get('vulnerabilities'):
+                          findings.append((project.get('path'), package.get('id'), package.get('resolvedVersion')))
+
+          if findings:
+              for path, package_id, version in findings:
+                  print(f"::error::Vulnerable dependency {package_id} {version} in {path}")
+              sys.exit(1)
+          print('No vulnerable NuGet dependencies found.')
+          PY
 
       - name: Build project
         run: dotnet build Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj -c Release --no-restore
 
-      - name: Build and Package Plugin (dry run)
+      - name: Build and package release ZIP
         run: python scripts/build.py
+
+      - name: Show artifact checksums
+        run: |
+          set -euo pipefail
+          cat dist/checksums.txt
