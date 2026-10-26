@@ -1,186 +1,292 @@
 #!/usr/bin/env python3
 """
-Publishes a GitHub release and uploads the compiled plugin ZIP.
-Always verifies the remote checksum after upload -- fails loudly on mismatch.
+Publish a GitHub release, verify the uploaded asset end-to-end, and update
+manifest.json from the *verified remote* checksum.
+
+This script never pushes Git commits. It uses the GitHub API only. The release
+workflow runs it after the build job; for local/manual use, run it with a token
+in GITHUB_TOKEN/GH_TOKEN or a configured git credential helper.
 """
 
+from __future__ import annotations
+
+import argparse
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from update_manifest import upsert_version  # noqa: E402
 
-def get_token():
-    p = subprocess.Popen(
-        ['git', 'credential', 'fill'],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+ASSET_NAME = "jellyfin-discord-rich-presence.zip"
+DLL_NAME = "Jellyfin.Plugin.DiscordRichPresence.dll"
+TAG_RE = re.compile(r"^v\d+\.\d+\.\d+\.\d+$")
+API_TIMEOUT = 30
+DOWNLOAD_TIMEOUT = 120
+
+
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Strip credentials when GitHub redirects to a different host, and refuse HTTP."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802
+        if urllib.parse.urlsplit(newurl).scheme != "https":
+            return None
+
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is None:
+            return None
+
+        old_host = urllib.parse.urlsplit(req.full_url).hostname
+        new_host = urllib.parse.urlsplit(newurl).hostname
+        if old_host != new_host:
+            new_req.remove_header("Authorization")
+        return new_req
+
+
+_OPENER = urllib.request.build_opener(SafeRedirectHandler)
+
+
+def get_token() -> str:
+    for name in ("GITHUB_TOKEN", "GH_TOKEN"):
+        token = os.environ.get(name, "").strip()
+        if token:
+            return token
+
+    proc = subprocess.Popen(
+        ["git", "credential", "fill"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
-    out, _ = p.communicate('protocol=https\nhost=github.com\n\n')
+    out, _ = proc.communicate("protocol=https\nhost=github.com\n\n")
     for line in out.splitlines():
-        if line.startswith('password='):
-            return line.split('=', 1)[1]
-    print('ERROR: Could not retrieve GitHub token from git credential manager.')
+        if line.startswith("password="):
+            return line.split("=", 1)[1]
+
+    print("ERROR: no GitHub token found. Set GITHUB_TOKEN/GH_TOKEN or configure git credentials.")
     sys.exit(1)
 
 
-def api(url, headers, method='GET', payload=None):
-    data = json.dumps(payload).encode('utf-8') if payload else None
-    req = urllib.request.Request(url, data=data, headers=headers)
-    req.get_method = lambda: method
-    with urllib.request.urlopen(req) as resp:
-        body = resp.read()
-        if body:
-            return json.loads(body.decode('utf-8'))
-        return None
+def api(url: str, headers: dict, method: str = "GET", payload: dict | None = None):
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(url, data=data, headers=headers)
+    request.get_method = lambda: method
+
+    with _OPENER.open(request, timeout=API_TIMEOUT) as response:
+        body = response.read()
+        return json.loads(body.decode("utf-8")) if body else None
 
 
-def _extract_release_section(notes_file: Path, tag: str) -> str:
-    """
-    Parses RELEASE_NOTES.md and returns only the section for *tag*.
+def download(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "jellyfin-discord-rich-presence-release"})
+    with _OPENER.open(request, timeout=DOWNLOAD_TIMEOUT) as response:
+        return response.read()
 
-    Each release section starts with a line like:
-        ## ... vX.X.X.X ...
-    and ends at the next `---` separator OR the next `##` heading.
 
-    If the section cannot be found the full file is returned as fallback
-    (better than an empty body).
-    """
-    version = tag.lstrip('v')          # "v1.2.0.0" → "1.2.0.0"
+def hashes(data: bytes) -> tuple[str, str]:
+    return hashlib.md5(data).hexdigest().upper(), hashlib.sha256(data).hexdigest().lower()
 
+
+def extract_release_section(notes_file: Path, tag: str) -> str:
+    version = tag.lstrip("v")
     if not notes_file.exists():
-        return f'Release {tag}'
+        return f"Release {tag}"
 
-    lines = notes_file.read_text(encoding='utf-8').splitlines(keepends=True)
-
+    lines = notes_file.read_text(encoding="utf-8").splitlines(keepends=True)
     start = None
-    for i, line in enumerate(lines):
-        # Match any ## heading that contains the exact version string
-        if line.startswith('## ') and version in line:
-            start = i
+    for index, line in enumerate(lines):
+        if line.startswith("## ") and version in line:
+            start = index
             break
 
     if start is None:
-        print(f'  WARNING: Could not find section for {tag} in RELEASE_NOTES.md — using full file.')
-        return ''.join(lines)
+        print(f"WARNING: no RELEASE_NOTES.md section found for {tag}; using the full file.")
+        return "".join(lines).strip()
 
-    section = []
+    section: list[str] = []
     for line in lines[start:]:
-        # Stop at the next horizontal rule separator between releases
-        if line.strip() == '---':
+        if line.strip() == "---":
             break
-        # Stop if we hit another version heading (but not the one we started on)
-        if line.startswith('## ') and version not in line and section:
+        if line.startswith("## ") and version not in line and section:
             break
         section.append(line)
 
-    return ''.join(section).strip()
+    return "".join(section).strip()
 
 
-def main():
+def validate_zip(zip_path: Path) -> bytes:
+    data = zip_path.read_bytes()
+    with zipfile.ZipFile(zip_path) as archive:
+        names = archive.namelist()
+        if names != [DLL_NAME]:
+            raise SystemExit(f"ERROR: unexpected ZIP contents: {names}")
+        if archive.testzip() is not None:
+            raise SystemExit("ERROR: ZIP integrity check failed.")
+    return data
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Publish and verify a GitHub release.")
+    parser.add_argument("--tag", default=os.environ.get("TAG", ""), help="Release tag, e.g. v1.4.0.0")
+    parser.add_argument(
+        "--repo",
+        default=os.environ.get("REPO", "Pankyop/rich-presence-for-jellyfin-in-discord-Plugin"),
+    )
+    parser.add_argument("--zip", default="dist/jellyfin-discord-rich-presence.zip")
+    parser.add_argument("--notes", default="RELEASE_NOTES.md")
+    parser.add_argument("--target", default=os.environ.get("GITHUB_SHA", "main"))
+    parser.add_argument("--no-manifest", action="store_true", help="Do not update manifest.json.")
+    parser.add_argument("--dry-run", action="store_true", help="Validate inputs without calling GitHub.")
+    args = parser.parse_args(argv)
+
+    tag = args.tag.strip()
+    if not TAG_RE.match(tag):
+        raise SystemExit(f"ERROR: invalid tag '{tag}' (expected vX.Y.Z.W).")
+
     root = Path(__file__).resolve().parent.parent
-    zip_path = root / 'dist' / 'jellyfin-discord-rich-presence.zip'
-    notes_file = root / 'RELEASE_NOTES.md'
-
-    repo = 'Pankyop/rich-presence-for-jellyfin-in-discord-Plugin'
-    tag = 'v1.3.0.0'
-    release_name = 'Release v1.3.0.0 - Interactive Buttons, Music Artwork & Stability'
+    zip_path = (root / args.zip).resolve()
+    notes_file = (root / args.notes).resolve()
 
     if not zip_path.exists():
-        print(f'ERROR: {zip_path} not found. Run python scripts/build.py first.')
-        sys.exit(1)
+        raise SystemExit(f"ERROR: {zip_path} not found. Run scripts/build.py first.")
 
-    # Read zip ONCE into memory. Use len(zip_data) for Content-Length, never stat().
-    with open(zip_path, 'rb') as f:
-        zip_data = f.read()
+    zip_data = validate_zip(zip_path)
+    local_md5, local_sha256 = hashes(zip_data)
+    version = tag.lstrip("v")
+    print(
+        f"==> Local asset: {len(zip_data):,} bytes  "
+        f"MD5={local_md5}  SHA256={local_sha256}"
+    )
 
-    local_md5 = hashlib.md5(zip_data).hexdigest().upper()
-    print(f'==> Local zip: {len(zip_data):,} bytes  MD5={local_md5}')
+    if args.dry_run:
+        print("==> Dry run: validation completed, no GitHub API calls made.")
+        return 0
 
     token = get_token()
     headers = {
-        'Authorization': f'token {token}',
-        'User-Agent': 'curl/7.0',
-        'Accept': 'application/vnd.github.v3+json'
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "jellyfin-discord-rich-presence-release",
     }
+    repo = args.repo.strip()
+    api_base = f"https://api.github.com/repos/{repo}"
 
-    body_text = _extract_release_section(notes_file, tag)
+    body_text = extract_release_section(notes_file, tag)
+    release_name = f"Release {tag}"
+    if body_text.startswith("## "):
+        release_name = body_text.splitlines()[0].lstrip("# ").strip()
 
-    # Get or create release
     release = None
     try:
-        release = api(f'https://api.github.com/repos/{repo}/releases/tags/{tag}', headers)
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
+        release = api(f"{api_base}/releases/tags/{tag}", headers)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
             raise
 
     if not release:
-        print(f'==> Creating release {tag}...')
-        release = api(f'https://api.github.com/repos/{repo}/releases', headers, 'POST', {
-            'tag_name': tag, 'target_commitish': 'main', 'name': release_name,
-            'body': body_text, 'draft': False, 'prerelease': False
-        })
-        print(f"    Release created: ID={release['id']}")
+        print(f"==> Creating release {tag}...")
+        release = api(
+            f"{api_base}/releases",
+            headers,
+            "POST",
+            {
+                "tag_name": tag,
+                "target_commitish": args.target,
+                "name": release_name,
+                "body": body_text,
+                "draft": False,
+                "prerelease": False,
+            },
+        )
     else:
         print(f"==> Updating release {tag} (ID={release['id']})...")
-        release = api(f"https://api.github.com/repos/{repo}/releases/{release['id']}", headers, 'PATCH', {
-            'name': release_name, 'body': body_text
-        })
+        release = api(
+            f"{api_base}/releases/{release['id']}",
+            headers,
+            "PATCH",
+            {"name": release_name, "body": body_text},
+        )
 
-    # Delete existing asset
-    asset_name = 'jellyfin-discord-rich-presence.zip'
-    existing = {a['name']: a['id'] for a in release.get('assets', [])}
-    if asset_name in existing:
-        print(f"==> Removing old asset (ID={existing[asset_name]})...")
-        api(f"https://api.github.com/repos/{repo}/releases/assets/{existing[asset_name]}", headers, 'DELETE')
+    existing = {asset["name"]: asset["id"] for asset in release.get("assets", [])}
+    if ASSET_NAME in existing:
+        print(f"==> Removing previous asset (ID={existing[ASSET_NAME]})...")
+        api(f"{api_base}/releases/assets/{existing[ASSET_NAME]}", headers, "DELETE")
 
-    # Upload using len(zip_data) as Content-Length
-    print(f'==> Uploading {len(zip_data):,} bytes...')
-    upload_url = release['upload_url'].split('{')[0] + f'?name={asset_name}'
+    print(f"==> Uploading {len(zip_data):,} bytes...")
+    upload_url = release["upload_url"].split("{")[0] + "?name=" + urllib.parse.quote(ASSET_NAME)
     upload_headers = {
-        'Authorization': f'token {token}',
-        'User-Agent': 'curl/7.0',
-        'Content-Type': 'application/zip',
-        'Content-Length': str(len(zip_data))
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/zip",
+        "Content-Length": str(len(zip_data)),
+        "User-Agent": "jellyfin-discord-rich-presence-release",
     }
-    req = urllib.request.Request(upload_url, data=zip_data, headers=upload_headers)
-    with urllib.request.urlopen(req) as resp:
-        uploaded = json.loads(resp.read().decode('utf-8'))
+    upload_request = urllib.request.Request(upload_url, data=zip_data, headers=upload_headers)
+    with _OPENER.open(upload_request, timeout=DOWNLOAD_TIMEOUT) as response:
+        uploaded = json.loads(response.read().decode("utf-8"))
+
     print(f"    Uploaded: {uploaded['size']:,} bytes  ID={uploaded['id']}")
 
-    # MANDATORY: verify remote checksum
-    print('==> Verifying remote checksum...')
-    verify_headers = dict(headers)
-    verify_headers['Accept'] = 'application/octet-stream'
-    req = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/releases/assets/{uploaded['id']}",
-        headers=verify_headers
-    )
-    with urllib.request.urlopen(req) as resp:
-        remote_data = resp.read()
+    # Mandatory verification: download the public asset exactly as Jellyfin would.
+    print("==> Verifying remote asset...")
+    remote_data = download(uploaded["browser_download_url"])
+    remote_md5, remote_sha256 = hashes(remote_data)
 
-    remote_md5 = hashlib.md5(remote_data).hexdigest().upper()
-    print(f'    Local  MD5: {local_md5}')
-    print(f'    Remote MD5: {remote_md5}')
+    print(f"    Local  MD5/SHA256: {local_md5} / {local_sha256}")
+    print(f"    Remote MD5/SHA256: {remote_md5} / {remote_sha256}")
 
+    problems = []
+    if len(remote_data) != len(zip_data):
+        problems.append(f"size mismatch: local {len(zip_data)} vs remote {len(remote_data)}")
     if remote_md5 != local_md5:
-        print('')
-        print('=' * 60)
-        print('  FATAL: Remote checksum does NOT match local zip!')
-        print('  The upload was corrupted. DO NOT update manifest.json.')
-        print('=' * 60)
-        sys.exit(1)
+        problems.append("MD5 mismatch")
+    if remote_sha256 != local_sha256:
+        problems.append("SHA256 mismatch")
 
-    print('')
-    print('=' * 60)
-    print('  SUCCESS: Release published and checksum verified!')
+    digest = uploaded.get("digest")
+    if digest and digest != f"sha256:{local_sha256}":
+        problems.append(f"GitHub asset digest mismatch: {digest}")
+
+    if problems:
+        print("", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        print("  FATAL: uploaded asset does not match the local ZIP:", file=sys.stderr)
+        for problem in problems:
+            print(f"    - {problem}", file=sys.stderr)
+        print("  manifest.json was NOT modified.", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        return 1
+
+    if not args.no_manifest:
+        try:
+            upsert_version(root, version, remote_md5, tag, repo, notes_file)
+        except ValueError as exc:
+            print(f"ERROR: could not update manifest.json: {exc}", file=sys.stderr)
+            return 1
+
+    print("")
+    print("=" * 60)
+    print("  SUCCESS: release published and remote checksum verified.")
     print(f"  URL:      {release['html_url']}")
     print(f"  Download: {uploaded['browser_download_url']}")
-    print(f'  MD5:      {local_md5}  <-- use this in manifest.json')
-    print('=' * 60)
+    print(f"  MD5:      {remote_md5}")
+    print(f"  SHA256:   {remote_sha256}")
+    if not args.no_manifest:
+        print("  manifest.json updated. Commit it before pushing.")
+    print("=" * 60)
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    sys.exit(main())
