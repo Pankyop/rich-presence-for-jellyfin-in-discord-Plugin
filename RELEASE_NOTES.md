@@ -1,3 +1,33 @@
+## 🖼️ v1.4.1.0 — Series Artwork Restoration (2026-10-26)
+
+### 🌟 Highlights
+
+- **Episodes show the series poster again**:
+  Discord cards for TV and anime episodes no longer display the episode-specific IMDb still. The resolver now skips the exact episode IMDb lookup and uses the series-level artwork instead.
+- **Anime covers are restored**:
+  With **Allow external metadata lookups for artwork** enabled, anime episodes resolve the AniList series cover again (for example, the Overlord key visual) instead of a cropped episode frame.
+- **Movies, series and seasons are unchanged**:
+  They continue to use their exact IMDb artwork when available, with the existing AniList, TVMaze, Wikipedia and public-server fallbacks.
+
+### ⬆️ Upgrade Notes
+
+- If remote artwork is disabled, enable **Allow external metadata lookups for artwork** in the plugin settings (or configure a public HTTPS `Public Server URL`) to load covers from external providers.
+- Restart Jellyfin after installing this update so the new plugin assembly is loaded.
+
+### 🐛 Bug Fixes
+
+- Episode artwork no longer takes precedence over the series poster when the episode has its own IMDb identifier.
+- The fix is provider-agnostic: anime episodes use AniList, while other TV episodes fall back to TVMaze, IMDb title search or Wikipedia as before.
+
+### 📦 Integrity Checksums
+
+| Algorithm | Checksum |
+|---|---|
+| **MD5** *(Jellyfin Package Manager)* | `BD46EC3DB1F653248C187440C3706DA0` |
+| **SHA256** | `d172e5125dd156eacf4c54a4058e787a778976be4d6433a56d2ce87c35c548f5` |
+
+---
+
 ## 🛡️ v1.4.0.0 — Security, Privacy & Release Integrity (2026-10-26)
 
 ### 🌟 Highlights
