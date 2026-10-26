@@ -4,7 +4,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.DiscordRichPresence.Configuration;
 using Jellyfin.Plugin.DiscordRichPresence.Discord;
-using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Dto;
@@ -15,12 +14,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 {
     /// <summary>
     /// Background hosted service monitoring active Jellyfin sessions and updating Discord Rich Presence.
-    /// Conforms to modern .NET 8 / Jellyfin 10.9+ IHostedService lifecycle.
+    /// Conforms to the .NET 8 / Jellyfin 10.9+ IHostedService lifecycle.
     /// </summary>
     public sealed class SessionMonitor : IHostedService, IDisposable
     {
         private readonly ISessionManager _sessionManager;
-        private readonly IServerConfigurationManager _serverConfigurationManager;
         private readonly DiscordIpcClient _discordClient;
         private readonly ILogger<SessionMonitor> _logger;
         private readonly CancellationTokenSource _cts = new();
@@ -38,22 +36,21 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         private DateTimeOffset _lastUpdatedUtc = DateTimeOffset.MinValue;
         private Guid? _lastItemId;
         private bool _lastIsPaused;
-        private long _lastPositionTicks;            // for seek detection
-        private const double KeepaliveIntervalSec = 20.0;   // refresh even without state change
-        private const long SeekThresholdTicks = 10_000_000L * 5L; // 5-second seek threshold
+        private long _lastPositionTicks;
+        private const double KeepaliveIntervalSec = 20.0;
+        private const long SeekThresholdTicks = 10_000_000L * 5L;
 
-        // ── Pause grace period state ───────────────────────────────────────────
+        // ── Pause grace period state (guarded by _pauseLock) ───────────────────
+        private readonly object _pauseLock = new();
         private DateTimeOffset _pausedSince = DateTimeOffset.MaxValue;
         private bool _pausedPresenceCleared;
 
         public SessionMonitor(
             ISessionManager sessionManager,
-            IServerConfigurationManager serverConfigurationManager,
             DiscordIpcClient discordClient,
             ILogger<SessionMonitor> logger)
         {
             _sessionManager = sessionManager;
-            _serverConfigurationManager = serverConfigurationManager;
             _discordClient = discordClient;
             _logger = logger;
         }
@@ -62,14 +59,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         {
             _logger.LogInformation("Starting Discord Rich Presence Session Monitor...");
 
-            // Subscribe to official Jellyfin session events
             _sessionManager.PlaybackStart += OnPlaybackStart;
             _sessionManager.PlaybackStopped += OnPlaybackStopped;
             _sessionManager.PlaybackProgress += OnPlaybackProgress;
 
-            // Start periodic polling loop for continuous synchronization
             _pollLoopTask = Task.Run(PollLoopAsync);
-
             return Task.CompletedTask;
         }
 
@@ -80,12 +74,21 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 
             if (_pollLoopTask != null)
             {
-                await Task.WhenAny(_pollLoopTask, Task.Delay(2000, cancellationToken)).ConfigureAwait(false);
+                using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                await Task.WhenAny(_pollLoopTask, Task.Delay(Timeout.InfiniteTimeSpan, waitCts.Token)).ConfigureAwait(false);
             }
 
             if (_discordClient.IsConnected)
             {
-                await _discordClient.ClearActivityAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    using var clearCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    await _discordClient.ClearActivityAsync(clearCts.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("Could not clear Discord activity during shutdown: {Message}", ex.Message);
+                }
             }
         }
 
@@ -106,6 +109,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                         {
                             await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
                         }
+
                         continue;
                     }
 
@@ -122,151 +126,142 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             }
         }
 
-        private async void OnPlaybackStart(object? sender, PlaybackProgressEventArgs e)
+        private void OnPlaybackStart(object? sender, PlaybackProgressEventArgs e)
+        {
+            _discordClient.ResetConnectCooldown();
+            _ = RunEventAsync(() => HandlePlaybackEventAsync(e, isProgressEvent: false), "PlaybackStart");
+        }
+
+        private void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
+        {
+            _ = RunEventAsync(() => HandlePlaybackEventAsync(e, isProgressEvent: true), "PlaybackProgress");
+        }
+
+        private void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
+        {
+            _ = RunEventAsync(() => HandlePlaybackStoppedAsync(e), "PlaybackStopped");
+        }
+
+        private async Task RunEventAsync(Func<Task> action, string eventName)
         {
             try
             {
-                _discordClient.ResetConnectCooldown();
-                await HandlePlaybackEventAsync(e, isProgressEvent: false).ConfigureAwait(false);
+                await action().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Shutdown in progress.
             }
             catch (Exception ex)
             {
-                _logger.LogDebug("Error handling PlaybackStart event: {Message}", ex.Message);
+                _logger.LogDebug("Error handling {EventName} event: {Message}", eventName, ex.Message);
             }
         }
 
-        private async void OnPlaybackProgress(object? sender, PlaybackProgressEventArgs e)
+        private async Task HandlePlaybackStoppedAsync(PlaybackStopEventArgs e)
         {
-            try
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+            if (!config.Enabled || !IsSessionAllowed(e.Session, config))
             {
-                await HandlePlaybackEventAsync(e, isProgressEvent: true).ConfigureAwait(false);
+                return;
             }
-            catch (Exception ex)
+
+            // Check if any other session (matching user filter) is still playing.
+            var activeSession = FindActiveSession(config);
+            if (activeSession == null)
             {
-                _logger.LogDebug("Error handling PlaybackProgress event: {Message}", ex.Message);
+                ResetThrottleState();
+                ResetPauseState();
+                await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
             }
-        }
-
-        private async void OnPlaybackStopped(object? sender, PlaybackStopEventArgs e)
-        {
-            try
+            else
             {
-                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-                if (!config.Enabled)
-                {
-                    return;
-                }
-
-                if (!IsSessionAllowed(e.Session, config))
-                {
-                    return;
-                }
-
-                // Check if any other session (matching user filter) is still playing
-                var activeSession = FindActiveSession(config);
-                if (activeSession == null)
-                {
-                    ResetThrottleState();
-                    await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
-                }
-                else
-                {
-                    await UpdatePresenceAsync(
-                        activeSession.NowPlayingItem,
-                        activeSession.PlayState.PositionTicks,
-                        false,
-                        config,
-                        _cts.Token).ConfigureAwait(false);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug("Error clearing Discord activity on playback stop: {Message}", ex.Message);
+                await UpdatePresenceAsync(
+                    activeSession.NowPlayingItem,
+                    activeSession.PlayState.PositionTicks,
+                    false,
+                    config,
+                    _cts.Token).ConfigureAwait(false);
             }
         }
 
         private async Task HandlePlaybackEventAsync(PlaybackProgressEventArgs e, bool isProgressEvent)
         {
-            try
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+            if (!config.Enabled || !IsSessionAllowed(e.Session, config))
             {
-                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-                if (!config.Enabled)
-                {
-                    return;
-                }
-
-                // Apply user filter if configured
-                if (!IsSessionAllowed(e.Session, config))
-                {
-                    return;
-                }
-
-                var item = e.Session?.NowPlayingItem;
-
-                if (item == null)
-                {
-                    ResetThrottleState();
-                    await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
-                    return;
-                }
-
-                if (e.IsPaused)
-                {
-                    await HandlePausedStateAsync(item, e.PlaybackPositionTicks, config).ConfigureAwait(false);
-                    return;
-                }
-
-                // Reset pause grace state when resuming
-                _pausedSince = DateTimeOffset.MaxValue;
-                _pausedPresenceCleared = false;
-
-                // Throttle: for progress events, only send if something meaningful changed
-                if (isProgressEvent && !ShouldSendUpdate(item.Id, false, e.PlaybackPositionTicks))
-                {
-                    return;
-                }
-
-                await UpdatePresenceAsync(item, e.PlaybackPositionTicks, false, config, _cts.Token).ConfigureAwait(false);
+                return;
             }
-            catch (Exception ex)
+
+            var item = e.Session?.NowPlayingItem;
+            if (item == null)
             {
-                _logger.LogDebug("Error processing playback event for Discord: {Message}", ex.Message);
+                ResetThrottleState();
+                ResetPauseState();
+                await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
+                return;
             }
+
+            if (e.IsPaused)
+            {
+                await HandlePausedStateAsync(item, e.PlaybackPositionTicks, config).ConfigureAwait(false);
+                return;
+            }
+
+            ResetPauseState();
+
+            if (isProgressEvent && !ShouldSendUpdate(item.Id, false, e.PlaybackPositionTicks))
+            {
+                return;
+            }
+
+            await UpdatePresenceAsync(item, e.PlaybackPositionTicks, false, config, _cts.Token).ConfigureAwait(false);
         }
 
         private async Task HandlePausedStateAsync(BaseItemDto item, long? positionTicks, PluginConfiguration config)
         {
-            // First time entering pause
-            if (_pausedSince == DateTimeOffset.MaxValue)
-            {
-                _pausedSince = DateTimeOffset.UtcNow;
-                _pausedPresenceCleared = false;
-            }
+            var graceMinutes = Math.Clamp(config.PauseGracePeriodMinutes, 0, 30);
+            var now = DateTimeOffset.UtcNow;
+            var clear = false;
+            var update = false;
 
-            var pausedForMinutes = (DateTimeOffset.UtcNow - _pausedSince).TotalMinutes;
-
-            // If grace period expired, clear presence and don't update again
-            if (pausedForMinutes >= config.PauseGracePeriodMinutes)
+            lock (_pauseLock)
             {
-                if (!_pausedPresenceCleared)
+                if (_pausedSince == DateTimeOffset.MaxValue)
                 {
-                    _pausedPresenceCleared = true;
-                    ResetThrottleState();
-                    await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
+                    _pausedSince = now;
+                    _pausedPresenceCleared = false;
                 }
-                return;
+
+                var pausedForMinutes = (now - _pausedSince).TotalMinutes;
+
+                if (pausedForMinutes >= graceMinutes)
+                {
+                    if (!_pausedPresenceCleared)
+                    {
+                        _pausedPresenceCleared = true;
+                        clear = true;
+                    }
+                }
+                else if (!config.ShowPauseState)
+                {
+                    // Legacy behaviour: clear immediately on pause.
+                    clear = true;
+                }
+                else
+                {
+                    update = true;
+                }
             }
 
-            if (!config.ShowPauseState)
+            if (clear)
             {
-                // Legacy behavior: clear immediately on pause
                 ResetThrottleState();
                 await _discordClient.ClearActivityAsync(_cts.Token).ConfigureAwait(false);
                 return;
             }
 
-            // Show paused presence: only send once per pause event to avoid rate limiting
-            if (ShouldSendUpdate(item.Id, true, positionTicks))
+            if (update && ShouldSendUpdate(item.Id, true, positionTicks))
             {
                 await UpdatePresenceAsync(item, positionTicks, true, config, _cts.Token).ConfigureAwait(false);
             }
@@ -278,50 +273,78 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
 
             if (playingSession == null)
             {
-                // Check for a paused session (user filter applied, ordered by most recent activity)
                 var pausedSession = _sessionManager.Sessions
                     .Where(s => IsSessionAllowed(s, config))
                     .Where(s => s.NowPlayingItem != null && s.PlayState.IsPaused)
                     .OrderByDescending(s => s.LastActivityDate)
                     .FirstOrDefault();
 
-                if (pausedSession != null && config.ShowPauseState)
+                if (pausedSession?.NowPlayingItem != null && config.ShowPauseState)
                 {
-                    // Sync paused state via polling
                     var pausedItem = pausedSession.NowPlayingItem;
-                    if (pausedItem != null && !_pausedPresenceCleared)
+                    var graceMinutes = Math.Clamp(config.PauseGracePeriodMinutes, 0, 30);
+                    var now = DateTimeOffset.UtcNow;
+                    var clear = false;
+                    var update = false;
+
+                    lock (_pauseLock)
                     {
                         if (_pausedSince == DateTimeOffset.MaxValue)
                         {
-                            _pausedSince = DateTimeOffset.UtcNow;
+                            _pausedSince = now;
                         }
-                        var pausedForMinutes = (DateTimeOffset.UtcNow - _pausedSince).TotalMinutes;
-                        if (pausedForMinutes < config.PauseGracePeriodMinutes)
+
+                        if ((now - _pausedSince).TotalMinutes >= graceMinutes)
                         {
-                            if (ShouldSendUpdate(pausedItem.Id, true, pausedSession.PlayState.PositionTicks))
+                            if (!_pausedPresenceCleared)
                             {
-                                await UpdatePresenceAsync(pausedItem, pausedSession.PlayState.PositionTicks, true, config, ct).ConfigureAwait(false);
+                                _pausedPresenceCleared = true;
+                                clear = true;
                             }
-                            return;
                         }
-                        // Grace period expired
-                        _pausedPresenceCleared = true;
+                        else if (!_pausedPresenceCleared)
+                        {
+                            update = true;
+                        }
                     }
+
+                    if (clear)
+                    {
+                        ResetThrottleState();
+                        if (_discordClient.IsConnected)
+                        {
+                            await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
+                        }
+
+                        return;
+                    }
+
+                    if (update)
+                    {
+                        if (ShouldSendUpdate(pausedItem.Id, true, pausedSession.PlayState.PositionTicks))
+                        {
+                            await UpdatePresenceAsync(pausedItem, pausedSession.PlayState.PositionTicks, true, config, ct).ConfigureAwait(false);
+                        }
+
+                        return;
+                    }
+
+                    return;
                 }
+
+                ResetPauseState();
 
                 if (_discordClient.IsConnected)
                 {
                     ResetThrottleState();
                     await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
                 }
+
                 return;
             }
 
-            // Reset pause state when playing
-            _pausedSince = DateTimeOffset.MaxValue;
-            _pausedPresenceCleared = false;
+            ResetPauseState();
 
-            // Only send if something meaningful changed (keepalive or item/seek change)
             if (!ShouldSendUpdate(playingSession.NowPlayingItem!.Id, false, playingSession.PlayState.PositionTicks))
             {
                 return;
@@ -346,13 +369,11 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                 var now = DateTimeOffset.UtcNow;
                 var elapsed = (now - _lastUpdatedUtc).TotalSeconds;
 
-                // Always send on item change or pause state change
                 if (_lastItemId != itemId || _lastIsPaused != isPaused)
                 {
                     return true;
                 }
 
-                // Detect seek: position jumped more than SeekThresholdTicks from expected
                 if (positionTicks.HasValue && elapsed < KeepaliveIntervalSec)
                 {
                     var expectedTicks = _lastPositionTicks + (long)(elapsed * 10_000_000L);
@@ -363,7 +384,6 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                     }
                 }
 
-                // Keepalive: send every KeepaliveIntervalSec to refresh Discord timestamps
                 return elapsed >= KeepaliveIntervalSec;
             }
         }
@@ -382,16 +402,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                 return;
             }
 
-            var serverAddress = GetServerBaseUrl();
-            var activity = await ActivityBuilder.BuildAsync(item, positionTicks, isPaused, config, serverAddress, ct).ConfigureAwait(false);
-
-            if (activity == null)
-            {
-                ResetThrottleState();
-                await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
-                return;
-            }
-
+            // Connect first: do not perform external artwork lookups (or build payloads) when
+            // Discord is not running, so a closed Discord client never generates network traffic.
             if (!_discordClient.IsConnected)
             {
                 var connected = await _discordClient.ConnectAsync(config.DiscordApplicationId, ct).ConfigureAwait(false);
@@ -399,6 +411,15 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                 {
                     return;
                 }
+            }
+
+            var activity = await ActivityBuilder.BuildAsync(item, positionTicks, isPaused, config, ct).ConfigureAwait(false);
+
+            if (activity == null)
+            {
+                ResetThrottleState();
+                await _discordClient.ClearActivityAsync(ct).ConfigureAwait(false);
+                return;
             }
 
             var sent = await _discordClient.SetActivityAsync(activity, ct).ConfigureAwait(false);
@@ -415,7 +436,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
         }
 
         /// <summary>
-        /// Finds the active (non-paused) playing session, applying TargetUserId filter if configured,
+        /// Finds the active (non-paused) playing session, applying the TargetUserId filter if configured,
         /// prioritizing the most recently active session to prevent flickering on multi-session setups.
         /// </summary>
         private SessionInfo? FindActiveSession(PluginConfiguration config)
@@ -440,10 +461,9 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             var target = config.TargetUserId?.Trim();
             if (string.IsNullOrWhiteSpace(target))
             {
-                return true; // no filter: allow all sessions
+                return true;
             }
 
-            // Match by username (case-insensitive) or by user ID string
             return string.Equals(session.UserName, target, StringComparison.OrdinalIgnoreCase)
                 || session.UserId.ToString().Equals(target, StringComparison.OrdinalIgnoreCase);
         }
@@ -455,18 +475,17 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
                 _lastItemId = null;
                 _lastUpdatedUtc = DateTimeOffset.MinValue;
                 _lastPositionTicks = 0;
+                _lastIsPaused = false;
             }
         }
 
-        private string GetServerBaseUrl()
+        private void ResetPauseState()
         {
-            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-            if (!string.IsNullOrWhiteSpace(config.PublicServerUrl))
+            lock (_pauseLock)
             {
-                return config.PublicServerUrl.Trim().TrimEnd('/');
+                _pausedSince = DateTimeOffset.MaxValue;
+                _pausedPresenceCleared = false;
             }
-
-            return "http://localhost:8096";
         }
 
         public void Dispose()
@@ -483,6 +502,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Session
             _sessionManager.PlaybackProgress -= OnPlaybackProgress;
 
             _cts.Cancel();
+            _cts.Dispose();
         }
     }
 }
