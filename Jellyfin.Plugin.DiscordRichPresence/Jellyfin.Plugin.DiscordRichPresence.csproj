@@ -26,9 +26,9 @@
     <DebugSymbols>false</DebugSymbols>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <!-- Plugin version — must match manifest.json and the release tag exactly -->
-    <Version>1.4.0.0</Version>
-    <AssemblyVersion>1.4.0.0</AssemblyVersion>
-    <FileVersion>1.4.0.0</FileVersion>
+    <Version>1.4.1.0</Version>
+    <AssemblyVersion>1.4.1.0</AssemblyVersion>
+    <FileVersion>1.4.1.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
