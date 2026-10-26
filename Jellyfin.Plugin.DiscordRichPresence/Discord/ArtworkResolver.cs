@@ -156,8 +156,10 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                     }
                 }
 
-                // 5. Exact IMDb ID match if available (highest accuracy for movies and TV).
-                if (!string.IsNullOrWhiteSpace(imdbId))
+                // 5. Exact IMDb ID match if available (highest accuracy for movies, series and seasons).
+                // Episodes intentionally skip this step: IMDb returns an episode still for them,
+                // while the Discord card must keep showing the series poster.
+                if (!string.IsNullOrWhiteSpace(imdbId) && item.Type != BaseItemKind.Episode)
                 {
                     using var imdbIdCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     imdbIdCts.CancelAfter(TimeSpan.FromSeconds(2));
