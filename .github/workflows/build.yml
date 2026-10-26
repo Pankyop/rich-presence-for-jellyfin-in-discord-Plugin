@@ -42,7 +42,7 @@ jobs:
       - name: Validate scripts and JSON
         run: |
           set -euo pipefail
-          python -m py_compile scripts/build.py scripts/update_manifest.py scripts/publish_release.py scripts/verify_release.py
+          python -m py_compile scripts/build.py scripts/update_manifest.py scripts/sync_release_notes.py scripts/publish_release.py scripts/verify_release.py
           python - <<'PY'
           import json
           from pathlib import Path
