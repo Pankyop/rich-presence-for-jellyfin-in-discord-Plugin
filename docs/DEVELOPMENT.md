@@ -1,16 +1,16 @@
 # Development Guide
 
-Guidelines for building, developing, testing, and debugging the **Discord Rich Presence** Jellyfin Plugin.
+Guidelines for building, developing, testing, and debugging the **Discord Rich Presence** Jellyfin plugin.
 
 ---
 
 ## Prerequisites
 
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- Python 3.9+ (for build automation script)
+- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) — the SDK version is pinned by `global.json` (`8.0.400`, `rollForward: latestFeature`).
+- Python 3.9+ (CI uses 3.11) for the build/release scripts.
 - Git
-- Discord Desktop Client (running locally for RPC testing)
-- Jellyfin Server 12.1+ / 10.9+ for integration testing
+- Discord Desktop Client running locally (for IPC testing)
+- Jellyfin Server 10.9+ (target ABI `10.9.0.0`) for integration testing
 
 ---
 
@@ -23,60 +23,149 @@ Jellyfin.Plugin.DiscordRichPresence/
 │   └── configPage.html               # Embedded HTML dashboard UI
 ├── Discord/
 │   ├── DiscordIpcClient.cs           # Cross-platform named pipe/socket IPC client
+│   ├── ArtworkResolver.cs            # Opt-in artwork resolution + URL validation
 │   ├── Models/
 │   │   ├── DiscordActivity.cs        # Discord RPC Activity DTO
 │   │   └── DiscordRpcPayloads.cs     # Handshake, Frame, and Command packets
-│   └── ActivityBuilder.cs            # Formats media items and calculates timestamps
+│   └── ActivityBuilder.cs            # Formats media items, timestamps and buttons
 ├── Session/
 │   └── SessionMonitor.cs             # IHostedService lifecycle and ISessionManager events
 ├── Plugin.cs                         # BasePlugin<T> entry point and IHasWebPages
-└── PluginServiceRegistrator.cs       # DI registration (IPluginServiceRegistrator)
+├── PluginServiceRegistrator.cs       # DI registration (IPluginServiceRegistrator)
+├── packages.lock.json                # Locked NuGet dependency graph (committed)
+└── Jellyfin.Plugin.DiscordRichPresence.csproj
+scripts/
+├── build.py                          # Compile, package single DLL, MD5/SHA256 metadata
+├── update_manifest.py                # Insert/update manifest.json version entry
+├── publish_release.py                # GitHub release upload + remote verification
+└── verify_release.py                 # Read-only manifest/notes/asset verification
 ```
 
 ---
 
 ## Build Workflow
 
-### Compile Plugin
+### Restore and compile
+
 ```bash
-dotnet build Jellyfin.Plugin.DiscordRichPresence/
+dotnet restore Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj --locked-mode
+dotnet build Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj -c Release --no-restore
 ```
 
-### Release Publish & Package
+`packages.lock.json` is committed and CI restores with `--locked-mode`. If you change a
+`PackageReference`, regenerate the lock file with a normal `dotnet restore` and commit it in
+the same change.
+
+### Release package
+
 ```bash
-python scripts/build.py
+python scripts/build.py --version 1.4.0.0
 ```
-This script:
-1. Performs `dotnet publish -c Release`.
-2. Packages `Jellyfin.Plugin.DiscordRichPresence.dll` into `dist/jellyfin-discord-rich-presence.zip`.
-3. Computes the SHA256 checksum required by `manifest.json`.
+
+The version passed on the command line must match `<Version>` in the `.csproj`; the script
+exits if they differ. It:
+
+1. Cleans `publish/` and `dist/`.
+2. Runs `dotnet publish -c Release` with deterministic build settings.
+3. Packages **only** `Jellyfin.Plugin.DiscordRichPresence.dll` into
+   `dist/jellyfin-discord-rich-presence.zip`, with a fixed ZIP timestamp.
+4. Verifies the archive contains exactly that one file and passes an integrity check.
+5. Writes `dist/checksums.txt` (MD5 + SHA256) and `dist/release-metadata.json`.
+
+Jellyfin verifies the **MD5** of the downloaded ZIP, while the SHA256 is the stronger
+integrity check used by the release tooling.
+
+---
+
+## Dependency and Security Checks
+
+```bash
+# Fails if any top-level or transitive package has a known advisory
+dotnet list Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj \
+  package --vulnerable --include-transitive
+
+# Validate Python scripts and manifest JSON
+python -m py_compile scripts/build.py scripts/update_manifest.py scripts/publish_release.py scripts/verify_release.py
+python -c "import json,pathlib; json.loads(pathlib.Path('manifest.json').read_text(encoding='utf-8'))"
+```
+
+`Jellyfin.Controller` 10.9.0 transitively pins vulnerable versions of `System.Text.Json`
+and `System.Text.Encodings.Web`. Both are overridden with patched .NET 8 versions in the
+`.csproj` (`PrivateAssets="All"`, so they are not shipped in the ZIP).
+
+---
+
+## Release Workflow
+
+1. Update `<Version>`/`<AssemblyVersion>`/`<FileVersion>` in the `.csproj`.
+2. Add a `## ... vX.Y.Z.W ...` section to `RELEASE_NOTES.md` including the checksum table.
+3. Build locally with `python scripts/build.py --version X.Y.Z.W`.
+4. Put the real MD5/SHA256 from `dist/release-metadata.json` into `RELEASE_NOTES.md` and
+   `manifest.json`, then rebuild so the packaged ZIP and the recorded checksums match.
+5. Commit, tag `vX.Y.Z.W`, and push the tag (or run the workflow manually with the tag).
+6. The release workflow:
+   - validates the tag format and that it points at the checked-out commit,
+   - restores locked dependencies and fails on vulnerable packages,
+   - builds the ZIP and uploads it as a workflow artifact,
+   - creates/updates the GitHub release and uploads the asset,
+   - re-downloads the **published** asset and compares size, MD5, SHA256, and GitHub's
+     digest,
+   - updates `manifest.json` only after that verification succeeds,
+   - runs `scripts/verify_release.py` against the published asset.
+
+`publish_release.py` never pushes Git commits; the workflow's auto-commit step commits
+`manifest.json`. The manifest is updated **after** upload so its checksum can never refer to
+a stale asset.
+
+Manual verification of any tag:
+
+```bash
+python scripts/verify_release.py --tag v1.4.0.0 --zip dist/jellyfin-discord-rich-presence.zip
+```
 
 ---
 
 ## Testing & Local Deployment
 
-To test local changes on your Jellyfin server directly without creating a release:
+To test local changes on your Jellyfin server without creating a release:
 
-### Windows:
+### Windows
+
 ```powershell
 Copy-Item publish\Jellyfin.Plugin.DiscordRichPresence.dll "$env:ProgramData\Jellyfin\Server\plugins\DiscordRichPresence\" -Force
 ```
 
-### Linux / Docker:
+### Linux / Docker
+
 ```bash
 cp publish/Jellyfin.Plugin.DiscordRichPresence.dll /var/lib/jellyfin/plugins/DiscordRichPresence/
 ```
 
 Then restart Jellyfin:
+
 ```bash
 sudo systemctl restart jellyfin
 ```
+
+### Manual checks
+
+- Discord Desktop must be running on the same host as Jellyfin (or share the IPC socket
+  when containerised) for a connection to succeed.
+- With external metadata lookups disabled, confirm that no outbound request is made while
+  playback starts (use a network monitor or DNS log).
+- Check the Jellyfin log for `Successfully connected to Discord Rich Presence IPC` and for
+  sanitized warnings rather than raw payloads.
 
 ---
 
 ## Code Quality Standards
 
 - **Nullable Reference Types**: Enabled across the entire solution.
-- **Async / Await**: Always use `.ConfigureAwait(false)` for non-UI tasks.
-- **Resource Management**: Implement `IDisposable` on classes holding IPC handles or event subscriptions.
-- **Thread Safety**: Protect shared state using `SemaphoreSlim` or concurrent collections.
+- **Async / Await**: Use `.ConfigureAwait(false)` for non-UI tasks.
+- **Resource Management**: Implement `IDisposable` on classes holding IPC handles or event
+  subscriptions; unsubscribe in `Dispose`.
+- **Thread Safety**: Protect shared state with `SemaphoreSlim`, locks, or concurrent
+  collections.
+- **External input**: Treat metadata provider responses as untrusted. Enforce HTTPS, public
+  hosts, size limits, and JSON depth limits.
+- **Logging**: Never log raw external payloads; strip control characters and cap length.
