@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
 """
-update_manifest.py — called by the GitHub Actions release workflow.
+Update manifest.json with a release entry.
 
-Reads environment variables set by the workflow:
-  VERSION   - numeric version, e.g. "1.0.3.0"
-  MD5       - MD5 checksum (uppercase) of the release zip
-  SHA256    - SHA256 checksum (lowercase) of the release zip
-  TAG       - git tag, e.g. "v1.0.3.0"
+Called by the GitHub Actions release workflow, and importable by
+``scripts/publish_release.py`` after it has verified the uploaded asset.
+
+Environment variables:
+  VERSION   - numeric version, e.g. "1.4.0.0"
+  MD5       - uppercase MD5 checksum of the release ZIP (required by Jellyfin)
+  SHA256    - lowercase SHA256 checksum of the release ZIP (optional, printed)
+  TAG       - git tag, e.g. "v1.4.0.0"
   REPO      - GitHub repository, e.g. "Pankyop/rich-presence-for-jellyfin-in-discord-Plugin"
-
-It prepends a new version entry to manifest.json's versions array,
-reading the changelog snippet from RELEASE_NOTES.md (first bullet block).
 """
+
+from __future__ import annotations
 
 import json
 import os
 import re
 import sys
-from pathlib import Path
 from datetime import date
+from pathlib import Path
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
+MD5_RE = re.compile(r"^[0-9A-Fa-f]{32}$")
+SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+ASSET_NAME = "jellyfin-discord-rich-presence.zip"
+
 
 def env(key: str) -> str:
     value = os.environ.get(key, "").strip()
@@ -31,85 +37,113 @@ def env(key: str) -> str:
 
 
 def extract_changelog(notes_path: Path, version: str) -> str:
-    """
-    Extract the first bullet-list block from RELEASE_NOTES.md for this version.
-    Falls back to a placeholder if parsing fails.
-    """
+    """Extract the first bullet-list block for *version* from RELEASE_NOTES.md."""
     try:
         text = notes_path.read_text(encoding="utf-8")
-        # Find the section that starts with the version heading
-        pattern = rf"## .*?{re.escape(version)}.*?\n(.*?)(?=\n## |\Z)"
-        match = re.search(pattern, text, re.DOTALL)
+        # Match the version in its own heading, not a cross-reference inside another
+        # release section (e.g. "fixed checksums for v1.3.0.0" in the v1.4.0.0 notes).
+        pattern = (
+            rf"^##[^\n]*?(?<![\d.]){re.escape(version)}(?![\d.])[^\n]*\n"
+            rf"(.*?)(?=^## |\Z)"
+        )
+        match = re.search(pattern, text, re.DOTALL | re.MULTILINE)
         if match:
             block = match.group(1).strip()
-            # Collect only bullet lines
             bullets = [
                 line.strip()
                 for line in block.splitlines()
-                if line.strip().startswith("-") or line.strip().startswith("*")
+                if line.strip().startswith(("-", "*"))
+                and line.strip() not in ("---", "***", "___")
             ]
             if bullets:
                 return "\n".join(bullets)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - release tooling must not crash on notes
         print(f"Warning: could not parse RELEASE_NOTES.md — {exc}", file=sys.stderr)
 
     return f"- Release {version}"
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+def upsert_version(
+    root: Path,
+    version: str,
+    md5: str,
+    tag: str,
+    repo: str,
+    notes_path: Path | None = None,
+) -> dict:
+    """Validate inputs and insert/replace the manifest entry for *version*."""
+    version = version.strip()
+    md5 = md5.strip().upper()
+    tag = tag.strip()
+    repo = repo.strip()
 
-def main() -> None:
-    root         = Path(__file__).resolve().parent.parent
+    if not VERSION_RE.match(version):
+        raise ValueError(f"invalid version '{version}' (expected X.Y.Z.W)")
+    if not MD5_RE.match(md5):
+        raise ValueError(f"invalid MD5 checksum '{md5}'")
+    if tag != f"v{version}":
+        raise ValueError(f"tag '{tag}' does not match version '{version}'")
+    if not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo):
+        raise ValueError(f"invalid GitHub repository '{repo}'")
+
     manifest_path = root / "manifest.json"
-    notes_path   = root / "RELEASE_NOTES.md"
-
-    version = env("VERSION")
-    md5     = env("MD5")
-    tag     = env("TAG")
-    repo    = env("REPO")
-
-    source_url = (
-        f"https://github.com/{repo}/releases/download/{tag}/"
-        "jellyfin-discord-rich-presence.zip"
-    )
-
+    notes_path = notes_path or root / "RELEASE_NOTES.md"
     changelog = extract_changelog(notes_path, version)
-    timestamp = f"{date.today().isoformat()}T00:00:00Z"
 
-    # Load existing manifest
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    plugin   = manifest[0]
+    if not isinstance(manifest, list) or not manifest or "versions" not in manifest[0]:
+        raise ValueError("manifest.json does not contain a plugin versions array")
 
-    # Build the new version entry
+    plugin = manifest[0]
     new_entry = {
-        "version":    version,
-        "changelog":  changelog,
-        "targetAbi":  "10.9.0.0",
-        "sourceUrl":  source_url,
-        "checksum":   md5,
-        "timestamp":  timestamp,
+        "version": version,
+        "changelog": changelog,
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": f"https://github.com/{repo}/releases/download/{tag}/{ASSET_NAME}",
+        "checksum": md5,
+        "timestamp": f"{date.today().isoformat()}T00:00:00Z",
     }
 
-    # Check if this version already exists (idempotent re-runs)
-    existing_versions = [v["version"] for v in plugin["versions"]]
-    if version in existing_versions:
-        print(f"Version {version} already present in manifest.json — updating entry.")
+    existing = [entry["version"] for entry in plugin["versions"]]
+    if version in existing:
         plugin["versions"] = [
-            new_entry if v["version"] == version else v
-            for v in plugin["versions"]
+            new_entry if entry["version"] == version else entry
+            for entry in plugin["versions"]
         ]
+        action = "updated"
     else:
-        # Prepend so the newest version is first
         plugin["versions"].insert(0, new_entry)
+        action = "added"
 
     manifest_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    print(f"✅  manifest.json updated → version {version}  MD5={md5}")
-    print(f"    sourceUrl: {source_url}")
-    print(f"    changelog: {changelog[:80]}{'...' if len(changelog) > 80 else ''}")
+    print(f"manifest.json {action}: version {version} MD5={md5}")
+    return new_entry
+
+
+def main() -> int:
+    root = Path(__file__).resolve().parent.parent
+    version = env("VERSION")
+    md5 = env("MD5")
+    tag = env("TAG")
+    repo = env("REPO")
+    sha256 = os.environ.get("SHA256", "").strip()
+
+    if sha256 and not SHA256_RE.match(sha256):
+        raise SystemExit(f"ERROR: invalid SHA256 checksum '{sha256}'.")
+
+    try:
+        upsert_version(root, version, md5, tag, repo)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if sha256:
+        print(f"Verified SHA256 input: {sha256.lower()}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
