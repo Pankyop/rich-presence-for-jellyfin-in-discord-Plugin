@@ -34,21 +34,30 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Configuration
         public bool ShowMediaBanner { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets a value indicating whether artwork may be resolved through external
+        /// metadata providers (IMDb, AniList, TVMaze, Wikipedia, Deezer, Cover Art Archive).
+        /// Disabled by default: when disabled, the plugin never sends media titles or provider
+        /// identifiers to third-party services and only uses the configured public server URL or
+        /// the bundled fallback artwork.
+        /// </summary>
+        public bool EnableExternalMetadataLookups { get; set; } = false;
+
+        /// <summary>
         /// Gets or sets a value indicating whether elapsed and total playback timestamps are shown.
         /// </summary>
         public bool ShowPlaybackPosition { get; set; } = true;
 
         /// <summary>
-        /// Gets or sets the publicly accessible URL of the Jellyfin server (e.g. https://jellyfin.example.com).
+        /// Gets or sets the publicly accessible HTTPS URL of the Jellyfin server (e.g. https://jellyfin.example.com).
         /// Discord's CDN proxies media artwork and cannot reach localhost or private LAN IP addresses.
-        /// When configured, public artwork URLs are sent to Discord for rich media covers.
+        /// Only HTTPS URLs without embedded credentials are accepted; otherwise the value is ignored.
         /// </summary>
         public string PublicServerUrl { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets the target Jellyfin User ID or Username to filter Discord Rich Presence for.
-        /// If empty, any active playback session is reported (default).
-        /// In multi-user servers, this prevents other users' sessions from overriding the host presence.
+        /// If empty, any active playback session is reported. On multi-user servers this should be
+        /// set explicitly, otherwise another user's playback can replace the host's Discord presence.
         /// </summary>
         public string TargetUserId { get; set; } = string.Empty;
 
