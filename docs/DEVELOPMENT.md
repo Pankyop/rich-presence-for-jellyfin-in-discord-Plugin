@@ -98,24 +98,29 @@ and `System.Text.Encodings.Web`. Both are overridden with patched .NET 8 version
 ## Release Workflow
 
 1. Update `<Version>`/`<AssemblyVersion>`/`<FileVersion>` in the `.csproj`.
-2. Add a `## ... vX.Y.Z.W ...` section to `RELEASE_NOTES.md` including the checksum table.
-3. Build locally with `python scripts/build.py --version X.Y.Z.W`.
-4. Put the real MD5/SHA256 from `dist/release-metadata.json` into `RELEASE_NOTES.md` and
-   `manifest.json`, then rebuild so the packaged ZIP and the recorded checksums match.
-5. Commit, tag `vX.Y.Z.W`, and push the tag (or run the workflow manually with the tag).
-6. The release workflow:
+2. Add a `## ... vX.Y.Z.W ...` section to `RELEASE_NOTES.md` including the checksum
+   table. The MD5/SHA256 values may be `PENDING`: the workflow replaces them with the
+   checksums of the build it actually publishes.
+3. Build locally with `python scripts/build.py --version X.Y.Z.W` to check that the
+   project compiles and the ZIP is produced.
+4. Commit, tag `vX.Y.Z.W`, and push the tag (or run the workflow manually with the tag).
+5. The release workflow:
    - validates the tag format and that it points at the checked-out commit,
    - restores locked dependencies and fails on vulnerable packages,
    - builds the ZIP and uploads it as a workflow artifact,
+   - rewrites the checksum rows of the tag's `RELEASE_NOTES.md` section with the
+     checksums of that build, because a runner build can differ from a local build
+     (for example a different .NET SDK patch),
    - creates/updates the GitHub release and uploads the asset,
-   - re-downloads the **published** asset and compares size, MD5, SHA256, and GitHub's
-     digest,
+   - re-downloads the **published** asset (bypassing the CDN cache) and compares size,
+     MD5, SHA256, and GitHub's digest,
    - updates `manifest.json` only after that verification succeeds,
-   - runs `scripts/verify_release.py` against the published asset.
+   - runs `scripts/verify_release.py` against the published asset,
+   - commits `manifest.json` and `RELEASE_NOTES.md`.
 
 `publish_release.py` never pushes Git commits; the workflow's auto-commit step commits
-`manifest.json`. The manifest is updated **after** upload so its checksum can never refer to
-a stale asset.
+the verified checksums. The manifest is updated **after** upload so its checksum can
+never refer to a stale asset.
 
 Manual verification of any tag:
 
