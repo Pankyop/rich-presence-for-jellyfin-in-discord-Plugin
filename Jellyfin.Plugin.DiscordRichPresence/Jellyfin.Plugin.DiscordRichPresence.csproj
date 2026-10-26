@@ -50,7 +50,7 @@
       System.Text.Encodings.Web 4.5.0 (GHSA-ghhp-997w-qr28). Override it with the
       .NET 8 assembly; this reference is compile-time only.
     -->
-    <PackageReference Include="System.Text.Encodings.Web" Version="8.0.0" PrivateAssets="All" />
+    <PackageReference Include="System.Text.Encodings.Web" Version="10.0.14" PrivateAssets="All" />
   </ItemGroup>
 
   <!-- Embed the HTML configuration page for the Jellyfin admin dashboard -->
