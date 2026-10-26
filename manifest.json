@@ -9,6 +9,14 @@
     "imageUrl": "https://raw.githubusercontent.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/main/assets/logo.png",
     "versions": [
       {
+        "version": "1.4.1.0",
+        "changelog": "- **Episodes show the series poster again**:\n- **Anime covers are restored**:\n- **Movies, series and seasons are unchanged**:\n- If remote artwork is disabled, enable **Allow external metadata lookups for artwork** in the plugin settings (or configure a public HTTPS `Public Server URL`) to load covers from external providers.\n- Restart Jellyfin after installing this update so the new plugin assembly is loaded.\n- Episode artwork no longer takes precedence over the series poster when the episode has its own IMDb identifier.\n- The fix is provider-agnostic: anime episodes use AniList, while other TV episodes fall back to TVMaze, IMDb title search or Wikipedia as before.",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/Pankyop/rich-presence-for-jellyfin-in-discord-Plugin/releases/download/v1.4.1.0/jellyfin-discord-rich-presence.zip",
+        "checksum": "BD46EC3DB1F653248C187440C3706DA0",
+        "timestamp": "2026-10-26T00:00:00Z"
+      },
+      {
         "version": "1.4.0.0",
         "changelog": "- **Security & privacy hardening** — external metadata lookups are now opt-in and disabled by default\n- **HTTPS-only Public Server URL** with rejection of localhost, private/LAN addresses, userinfo, and DNS-rebinding bypasses\n- **IPC hardening** — application ID validation, read/write timeouts, PING/PONG handling, Windows pipe-owner check, user-private Unix socket directory\n- **Artwork resolution limits** — 512-entry cache, 512 KB response cap, HTTPS + artwork-CDN allowlist for provider images\n- **Provider ID validation** for IMDb, TMDb, AniList, and MusicBrainz action buttons\n- **Pause grace period `0` fix** and corrected configuration defaults in the web UI\n- **Release pipeline fix** — post-upload checksum verification, manifest updated only after verification, corrected historical checksums\n- **Supply chain hardening** — pinned GitHub Actions, locked NuGet restore, vulnerability gate, patched System.Text.Json/System.Text.Encodings.Web",
         "targetAbi": "10.9.0.0",
