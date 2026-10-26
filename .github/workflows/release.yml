@@ -7,98 +7,195 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v1.0.3.0) — only needed for manual runs without a tag'
-        required: false
+        description: 'Existing release tag (e.g. v1.4.0.0)'
+        required: true
         type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-release:
-    name: Build, Update Manifest & Publish Release
+  build:
+    name: Build & Verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      numeric: ${{ steps.version.outputs.numeric }}
+      md5: ${{ steps.checksums.outputs.md5 }}
+      sha256: ${{ steps.checksums.outputs.sha256 }}
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout tagged revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: main
-          # Full history needed so git-push back works correctly
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup .NET 8 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.x'
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
 
-      - name: Resolve release version
+      - name: Resolve and validate release version
         id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          else
-            VERSION="${{ github.ref_name }}"
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid release tag '$TAG' (expected vX.Y.Z.W)."
+            exit 1
           fi
-          # Strip leading 'v' for the numeric version (e.g. v1.0.3.0 → 1.0.3.0)
-          NUMERIC="${VERSION#v}"
-          echo "tag=${VERSION}"    >> "$GITHUB_OUTPUT"
-          echo "numeric=${NUMERIC}" >> "$GITHUB_OUTPUT"
+          NUMERIC="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "numeric=$NUMERIC" >> "$GITHUB_OUTPUT"
 
-      - name: Build and Package Plugin
-        run: python scripts/build.py
+      - name: Verify tag points at the checked-out commit
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+          HEAD_COMMIT="$(git rev-parse HEAD)"
+          if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+            echo "::error::Tag $TAG points at $TAG_COMMIT but HEAD is $HEAD_COMMIT."
+            exit 1
+          fi
 
-      - name: Extract checksums
+      - name: Restore locked NuGet dependencies
+        run: dotnet restore Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj --locked-mode
+
+      - name: Check for vulnerable dependencies
+        run: |
+          set -euo pipefail
+          dotnet list Jellyfin.Plugin.DiscordRichPresence/Jellyfin.Plugin.DiscordRichPresence.csproj \
+            package --vulnerable --include-transitive --format json > /tmp/vulnerabilities.json
+          python - <<'PY'
+          import json
+          import sys
+
+          with open('/tmp/vulnerabilities.json', encoding='utf-8') as handle:
+              report = json.load(handle)
+
+          findings = []
+          for project in report.get('projects', []):
+              for framework in project.get('frameworks', []):
+                  for package in framework.get('topLevelPackages', []) + framework.get('transitivePackages', []):
+                      if package.get('vulnerabilities'):
+                          findings.append((project.get('path'), package.get('id'), package.get('resolvedVersion')))
+
+          if findings:
+              for path, package_id, version in findings:
+                  print(f"::error::Vulnerable dependency {package_id} {version} in {path}")
+              sys.exit(1)
+          print('No vulnerable NuGet dependencies found.')
+          PY
+
+      - name: Build and package
+        env:
+          NUMERIC: ${{ steps.version.outputs.numeric }}
+        run: python scripts/build.py --version "$NUMERIC"
+
+      - name: Extract build checksums
         id: checksums
         run: |
-          python - <<'EOF'
-          import hashlib, json, os, pathlib, zipfile
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
 
-          zip_path = pathlib.Path("dist/jellyfin-discord-rich-presence.zip")
-          sha256 = hashlib.sha256()
-          md5    = hashlib.md5()
-          with open(zip_path, "rb") as f:
-              for chunk in iter(lambda: f.read(65536), b""):
-                  sha256.update(chunk)
-                  md5.update(chunk)
+          with open('dist/release-metadata.json', encoding='utf-8') as handle:
+              metadata = json.load(handle)
 
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"md5={md5.hexdigest().upper()}\n")
-              out.write(f"sha256={sha256.hexdigest().lower()}\n")
-          EOF
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f"md5={metadata['md5']}\n")
+              out.write(f"sha256={metadata['sha256']}\n")
+          PY
 
-      - name: Update manifest.json
+      - name: Upload release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-asset
+          path: |
+            dist/jellyfin-discord-rich-presence.zip
+            dist/release-metadata.json
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish Release & Update Manifest
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main for manifest update
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download verified release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-asset
+          path: dist
+
+      - name: Verify release tag is part of main
         env:
-          VERSION:    ${{ steps.version.outputs.numeric }}
-          MD5:        ${{ steps.checksums.outputs.md5 }}
-          SHA256:     ${{ steps.checksums.outputs.sha256 }}
-          TAG:        ${{ steps.version.outputs.tag }}
-          REPO:       ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
         run: |
-          python scripts/update_manifest.py
+          set -euo pipefail
+          git fetch --tags origin
+          if ! git rev-parse --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG does not exist. Create the tag before running the release workflow."
+            exit 1
+          fi
+          TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
+            echo "::error::Tag $TAG ($TAG_COMMIT) is not contained in main."
+            exit 1
+          fi
 
-      - name: Commit updated manifest.json
-        uses: stefanzweifel/git-auto-commit-action@v5
+      - name: Publish release, verify remote asset, update manifest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build.outputs.tag }}
+          REPO: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: python scripts/publish_release.py --tag "$TAG" --repo "$REPO"
+
+      - name: Verify manifest, release notes and remote asset
+        env:
+          TAG: ${{ needs.build.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: python scripts/verify_release.py --tag "$TAG" --zip dist/jellyfin-discord-rich-presence.zip --repo "$REPO"
+
+      - name: Commit verified manifest.json
+        uses: stefanzweifel/git-auto-commit-action@b863ae1933cb653a53c021fe36dbb774e1fb9403 # v5
         with:
           branch: main
-          commit_message: |
-            chore(release): update manifest.json for ${{ steps.version.outputs.tag }} [skip ci]
-          commit_user_name:  github-actions[bot]
+          commit_message: 'chore(release): update manifest.json for ${{ needs.build.outputs.tag }} [skip ci]'
+          commit_user_name: github-actions[bot]
           commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
-          commit_author:     github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          commit_author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           file_pattern: manifest.json
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name:   ${{ steps.version.outputs.tag }}
-          name:       'Release ${{ steps.version.outputs.tag }}'
-          files:      dist/jellyfin-discord-rich-presence.zip
-          body_path:  RELEASE_NOTES.md
-          draft:      false
-          prerelease: false
