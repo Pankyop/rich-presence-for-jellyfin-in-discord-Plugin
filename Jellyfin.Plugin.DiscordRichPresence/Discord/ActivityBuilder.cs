@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
@@ -16,14 +17,14 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
     public static class ActivityBuilder
     {
         /// <summary>
-        /// Asynchronously builds a DiscordActivity, resolving public artwork via ArtworkResolver (AniList, TVMaze, Wikipedia).
+        /// Asynchronously builds a DiscordActivity. Artwork is resolved through
+        /// <see cref="ArtworkResolver"/> only when media banners and external metadata lookups are enabled.
         /// </summary>
         public static async Task<DiscordActivity?> BuildAsync(
             BaseItemDto? item,
             long? positionTicks,
             bool isPaused,
             PluginConfiguration config,
-            string serverAddress,
             CancellationToken ct = default)
         {
             if (item == null)
@@ -34,7 +35,7 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
             string? artworkUrl = null;
             if (config.ShowMediaBanner)
             {
-                artworkUrl = await ArtworkResolver.ResolveArtworkUrlAsync(item, config, serverAddress, ct).ConfigureAwait(false);
+                artworkUrl = await ArtworkResolver.ResolveArtworkUrlAsync(item, config, ct).ConfigureAwait(false);
             }
 
             return item.Type switch
@@ -47,16 +48,15 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         }
 
         /// <summary>
-        /// Builds a DiscordActivity synchronously (delegates to BuildAsync).
+        /// Builds a DiscordActivity synchronously (delegates to <see cref="BuildAsync"/>).
         /// </summary>
         public static DiscordActivity? Build(
             BaseItemDto? item,
             long? positionTicks,
             bool isPaused,
-            PluginConfiguration config,
-            string serverAddress)
+            PluginConfiguration config)
         {
-            return BuildAsync(item, positionTicks, isPaused, config, serverAddress).GetAwaiter().GetResult();
+            return BuildAsync(item, positionTicks, isPaused, config).GetAwaiter().GetResult();
         }
 
         private static DiscordActivity BuildMovieActivity(
@@ -333,9 +333,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
         {
             var buttons = new List<DiscordButton>();
 
-            // 1. Direct Web playback button if public server URL is set and valid
-            var publicBase = config.PublicServerUrl?.Trim().TrimEnd('/');
-            if (!string.IsNullOrWhiteSpace(publicBase) && ArtworkResolver.IsPublicUrl(publicBase))
+            // 1. Direct web playback button if a valid public HTTPS server URL is configured.
+            if (ArtworkResolver.TryGetPublicBaseUrl(config.PublicServerUrl, out var publicBase))
             {
                 buttons.Add(new DiscordButton
                 {
@@ -344,20 +343,21 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                 });
             }
 
-            // 2. Metadata provider button (IMDb, TMDb, AniList, or MusicBrainz)
+            // 2. Metadata provider button (IMDb, TMDb, AniList, or MusicBrainz).
+            // Provider identifiers are validated before being embedded in a URL.
             if (buttons.Count < 2 && item.ProviderIds != null)
             {
-                if (item.ProviderIds.TryGetValue("Imdb", out var imdbId) &&
-                    !string.IsNullOrWhiteSpace(imdbId) &&
-                    imdbId.StartsWith("tt", StringComparison.OrdinalIgnoreCase))
+                if (TryGetProviderId(item, "Imdb", out var imdbId) &&
+                    Regex.IsMatch(imdbId, @"^tt[0-9]{7,10}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                 {
                     buttons.Add(new DiscordButton
                     {
                         Label = "IMDb",
-                        Url = $"https://www.imdb.com/title/{Uri.EscapeDataString(imdbId)}"
+                        Url = $"https://www.imdb.com/title/{Uri.EscapeDataString(imdbId.ToLowerInvariant())}"
                     });
                 }
-                else if (item.ProviderIds.TryGetValue("Tmdb", out var tmdbId) && !string.IsNullOrWhiteSpace(tmdbId))
+                else if (TryGetProviderId(item, "Tmdb", out var tmdbId) &&
+                         Regex.IsMatch(tmdbId, @"^[0-9]{1,10}$", RegexOptions.CultureInvariant))
                 {
                     var isTv = item.Type == BaseItemKind.Episode || item.Type == BaseItemKind.Series || item.Type == BaseItemKind.Season;
                     buttons.Add(new DiscordButton
@@ -366,7 +366,8 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                         Url = $"https://www.themoviedb.org/{(isTv ? "tv" : "movie")}/{Uri.EscapeDataString(tmdbId)}"
                     });
                 }
-                else if (item.ProviderIds.TryGetValue("AniList", out var aniListId) && !string.IsNullOrWhiteSpace(aniListId))
+                else if (TryGetProviderId(item, "AniList", out var aniListId) &&
+                         Regex.IsMatch(aniListId, @"^[0-9]{1,10}$", RegexOptions.CultureInvariant))
                 {
                     buttons.Add(new DiscordButton
                     {
@@ -374,17 +375,32 @@ namespace Jellyfin.Plugin.DiscordRichPresence.Discord
                         Url = $"https://anilist.co/anime/{Uri.EscapeDataString(aniListId)}"
                     });
                 }
-                else if (item.ProviderIds.TryGetValue("MusicBrainzAlbum", out var mbId) && !string.IsNullOrWhiteSpace(mbId))
+                else if (TryGetProviderId(item, "MusicBrainzAlbum", out var mbId) &&
+                         Regex.IsMatch(mbId, @"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", RegexOptions.CultureInvariant))
                 {
                     buttons.Add(new DiscordButton
                     {
                         Label = "MusicBrainz",
-                        Url = $"https://musicbrainz.org/release/{Uri.EscapeDataString(mbId)}"
+                        Url = $"https://musicbrainz.org/release/{Uri.EscapeDataString(mbId.ToLowerInvariant())}"
                     });
                 }
             }
 
             return buttons.Count > 0 ? buttons : null;
+        }
+
+        private static bool TryGetProviderId(BaseItemDto item, string key, out string value)
+        {
+            value = string.Empty;
+            if (item.ProviderIds == null ||
+                !item.ProviderIds.TryGetValue(key, out var raw) ||
+                string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            value = raw.Trim();
+            return true;
         }
     }
 }
