@@ -36,15 +36,15 @@
       Jellyfin.Controller and Jellyfin.Model are marked PrivateAssets="All"
       so they are NOT packaged into the zip — Jellyfin provides them at runtime.
     -->
-    <PackageReference Include="Jellyfin.Controller" Version="10.9.0" PrivateAssets="All" />
-    <PackageReference Include="Jellyfin.Model" Version="10.9.0" PrivateAssets="All" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.10.7" PrivateAssets="All" />
+    <PackageReference Include="Jellyfin.Model" Version="10.10.7" PrivateAssets="All" />
     <!--
       Jellyfin.Controller 10.9.0 pulls in System.Text.Json 8.0.3 transitively, which is
       affected by CVE-2024-30105 and CVE-2024-43485. Reference the patched 8.0.x build so
       the project compiles against a non-vulnerable version; Jellyfin still provides the
       runtime assembly, and this reference is not shipped in the release ZIP.
     -->
-    <PackageReference Include="System.Text.Json" Version="8.0.5" PrivateAssets="All" />
+    <PackageReference Include="System.Text.Json" Version="8.0.6" PrivateAssets="All" />
     <!--
       Microsoft.AspNetCore.Http.Extensions 2.2.0 (transitive) pins the vulnerable
       System.Text.Encodings.Web 4.5.0 (GHSA-ghhp-997w-qr28). Override it with the
